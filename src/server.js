@@ -8,6 +8,7 @@ import { authRouter } from './routes/auth.js';
 import { videosRouter } from './routes/videos.js';
 import { trackingRouter } from './routes/tracking.js';
 import { analyticsRouter } from './routes/analytics.js';
+import { adminRouter } from './routes/admin.js';
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -28,6 +29,7 @@ app.use('/api/auth', authRouter);
 app.use('/api/videos', videosRouter);
 app.use('/api/tracking', trackingRouter);
 app.use('/api/analytics', analyticsRouter);
+app.use('/api/admin', adminRouter);
 
 app.use((error, _req, res, _next) => {
   if (error instanceof ZodError) {
