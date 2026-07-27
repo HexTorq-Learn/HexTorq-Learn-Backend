@@ -9,6 +9,16 @@ const sessionSchema = z.object({
   videoId: z.string().optional(),
 });
 
+const optionalNumber = z.preprocess(
+  (value) => (value === null || value === '' ? undefined : value),
+  z.number().finite().optional(),
+);
+
+const optionalString = z.preprocess(
+  (value) => (value === null || value === '' ? undefined : value),
+  z.string().optional(),
+);
+
 const eventSchema = z.object({
   eventType: z.enum([
     'PLAY',
@@ -24,16 +34,16 @@ const eventSchema = z.object({
     'IDLE_END',
     'FLUSH',
   ]),
-  videoTimeSec: z.number().optional(),
-  fromTimeSec: z.number().optional(),
-  toTimeSec: z.number().optional(),
+  videoTimeSec: optionalNumber,
+  fromTimeSec: optionalNumber,
+  toTimeSec: optionalNumber,
   clientTs: z.string().datetime(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 const ingestSchema = z.object({
   videoId: z.string(),
-  sessionId: z.string().optional(),
+  sessionId: optionalString,
   events: z.array(eventSchema).default([]),
   heatmapTicks: z.record(z.string(), z.number().int().positive()).default({}),
 });
