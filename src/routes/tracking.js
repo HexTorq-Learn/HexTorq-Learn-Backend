@@ -2,6 +2,8 @@ import express from 'express';
 import { z } from 'zod';
 import { prisma } from '../prisma.js';
 import { requireAuth } from '../middleware/auth.js';
+import { emitUserMetrics } from '../realtime.js';
+import { getUserOverview, getUserTimeMap, startOfUtcDay } from '../services/analytics.js';
 
 export const trackingRouter = express.Router();
 
@@ -40,10 +42,6 @@ const ingestSchema = z.object({
   events: z.array(z.record(z.string(), z.unknown())).default([]),
   heatmapTicks: z.record(z.string(), z.unknown()).default({}),
 });
-
-function startOfUtcDay(date = new Date()) {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-}
 
 function finiteNumberOrUndefined(value) {
   const number = Number(value);
@@ -207,11 +205,20 @@ trackingRouter.post('/ingest', async (req, res, next) => {
       }
     });
 
-    res.json({
+    const result = {
       acceptedEvents: events.length,
       acceptedHeatmapTicks: heatmapEntries.length,
       activeWatchSeconds,
-    });
+    };
+
+    res.json(result);
+
+    Promise.all([
+      getUserOverview(req.user.id),
+      getUserTimeMap(req.user.id),
+    ])
+      .then(([overview, timeMap]) => emitUserMetrics(req.user.id, { overview, timeMap }))
+      .catch((error) => console.error('Failed to emit realtime metrics', error));
   } catch (error) {
     next(error);
   }

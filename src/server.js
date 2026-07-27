@@ -2,6 +2,7 @@ import 'dotenv/config';
 import cors from 'cors';
 import express from 'express';
 import helmet from 'helmet';
+import { createServer } from 'http';
 import morgan from 'morgan';
 import { ZodError } from 'zod';
 import { authRouter } from './routes/auth.js';
@@ -9,6 +10,8 @@ import { videosRouter } from './routes/videos.js';
 import { trackingRouter } from './routes/tracking.js';
 import { analyticsRouter } from './routes/analytics.js';
 import { adminRouter } from './routes/admin.js';
+import { playlistsRouter } from './routes/playlists.js';
+import { initRealtime } from './realtime.js';
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -26,6 +29,7 @@ app.get('/health', (_req, res) => {
 });
 
 app.use('/api/auth', authRouter);
+app.use('/api/playlists', playlistsRouter);
 app.use('/api/videos', videosRouter);
 app.use('/api/tracking', trackingRouter);
 app.use('/api/analytics', analyticsRouter);
@@ -48,6 +52,9 @@ app.use((error, _req, res, _next) => {
   return res.status(500).json({ message: 'Server error' });
 });
 
-app.listen(port, () => {
+const server = createServer(app);
+initRealtime(server);
+
+server.listen(port, () => {
   console.log(`HexTorq Learn backend listening on http://localhost:${port}`);
 });

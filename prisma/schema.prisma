@@ -41,14 +41,27 @@ model User {
   summaries    DailyWatchSummary[]
 }
 
+model Playlist {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  color       String   @default("#1f6f64")
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  videos      Video[]
+}
+
 model Video {
   id          String              @id @default(cuid())
   youtubeId   String              @unique
   title       String
   url         String
+  playlistId  String?
   durationSec Int?
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
+  playlist    Playlist?           @relation(fields: [playlistId], references: [id], onDelete: SetNull)
   sessions    WatchSession[]
   events      WatchEvent[]
   heatmap     VideoSecondHeatmap[]

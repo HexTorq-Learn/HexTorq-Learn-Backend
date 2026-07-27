@@ -3,6 +3,7 @@ import express from 'express';
 import { z } from 'zod';
 import { prisma } from '../prisma.js';
 import { requireAdmin, requireAuth } from '../middleware/auth.js';
+import { getUserTimeMap } from '../services/analytics.js';
 
 export const adminRouter = express.Router();
 
@@ -29,9 +30,10 @@ const updateVideoSchema = z.object({
 
 adminRouter.get('/summary', async (_req, res, next) => {
   try {
-    const [userCount, videoCount, eventCount, totals] = await Promise.all([
+    const [userCount, videoCount, playlistCount, eventCount, totals] = await Promise.all([
       prisma.user.count(),
       prisma.video.count(),
+      prisma.playlist.count(),
       prisma.watchEvent.count(),
       prisma.dailyWatchSummary.aggregate({
         _sum: {
@@ -46,6 +48,7 @@ adminRouter.get('/summary', async (_req, res, next) => {
     res.json({
       userCount,
       videoCount,
+      playlistCount,
       eventCount,
       totals: {
         activeWatchSeconds: totals._sum.activeWatchSeconds || 0,
@@ -70,7 +73,7 @@ adminRouter.get('/users', async (_req, res, next) => {
         role: true,
         createdAt: true,
         summaries: {
-          include: { video: true },
+          include: { video: { include: { playlist: true } } },
           orderBy: { date: 'desc' },
           take: 30,
         },
@@ -171,6 +174,7 @@ adminRouter.get('/videos', async (_req, res, next) => {
     const videos = await prisma.video.findMany({
       orderBy: { createdAt: 'desc' },
       include: {
+        playlist: true,
         summaries: {
           include: { user: { select: { id: true, name: true, email: true } } },
           orderBy: { date: 'desc' },
@@ -190,7 +194,9 @@ adminRouter.get('/videos', async (_req, res, next) => {
 
 adminRouter.patch('/videos/:id', async (req, res, next) => {
   try {
-    const body = updateVideoSchema.parse(req.body);
+    const body = updateVideoSchema.extend({
+      playlistId: z.string().nullable().optional(),
+    }).parse(req.body);
     const video = await prisma.video.update({
       where: { id: req.params.id },
       data: body,
@@ -221,13 +227,13 @@ adminRouter.get('/analytics/users/:id', async (req, res, next) => {
       prisma.dailyWatchSummary.findMany({
         where: { userId: req.params.id },
         orderBy: { date: 'desc' },
-        include: { video: true },
+        include: { video: { include: { playlist: true } } },
         take: 120,
       }),
       prisma.watchEvent.findMany({
         where: { userId: req.params.id },
         orderBy: { serverTs: 'desc' },
-        include: { video: true },
+        include: { video: { include: { playlist: true } } },
         take: 100,
       }),
     ]);
@@ -245,6 +251,14 @@ adminRouter.get('/analytics/users/:id', async (req, res, next) => {
     }, { activeWatchSeconds: 0, pauseCount: 0, seekCount: 0, sessionCount: 0 });
 
     res.json({ user, totals, summaries, recentEvents });
+  } catch (error) {
+    next(error);
+  }
+});
+
+adminRouter.get('/analytics/users/:id/time-map', async (req, res, next) => {
+  try {
+    res.json(await getUserTimeMap(req.params.id, req.query.date ? new Date(req.query.date) : new Date()));
   } catch (error) {
     next(error);
   }

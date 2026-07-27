@@ -8,6 +8,7 @@ export const videosRouter = express.Router();
 const videoSchema = z.object({
   url: z.string().url(),
   title: z.string().min(1).optional(),
+  playlistId: z.string().optional(),
   durationSec: z.number().int().positive().optional(),
 });
 
@@ -37,6 +38,7 @@ videosRouter.get('/', async (_req, res, next) => {
     const videos = await prisma.video.findMany({
       orderBy: { createdAt: 'desc' },
       include: {
+        playlist: true,
         _count: {
           select: { events: true },
         },
@@ -63,12 +65,14 @@ videosRouter.post('/', async (req, res, next) => {
       update: {
         title: body.title || `YouTube ${youtubeId}`,
         url: body.url,
+        playlistId: body.playlistId,
         durationSec: body.durationSec,
       },
       create: {
         youtubeId,
         title: body.title || `YouTube ${youtubeId}`,
         url: body.url,
+        playlistId: body.playlistId,
         durationSec: body.durationSec,
       },
     });
@@ -83,6 +87,7 @@ videosRouter.patch('/:id', async (req, res, next) => {
   try {
     const body = z.object({
       title: z.string().min(1).optional(),
+      playlistId: z.string().nullable().optional(),
       durationSec: z.number().int().positive().optional(),
     }).parse(req.body);
 

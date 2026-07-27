@@ -1,6 +1,7 @@
 import express from 'express';
 import { prisma } from '../prisma.js';
 import { requireAuth } from '../middleware/auth.js';
+import { getUserOverview, getUserTimeMap } from '../services/analytics.js';
 
 export const analyticsRouter = express.Router();
 
@@ -8,39 +9,15 @@ analyticsRouter.use(requireAuth);
 
 analyticsRouter.get('/overview', async (req, res, next) => {
   try {
-    const [summaries, recentEvents, videos] = await Promise.all([
-      prisma.dailyWatchSummary.findMany({
-        where: { userId: req.user.id },
-        orderBy: { date: 'desc' },
-        include: { video: true },
-        take: 60,
-      }),
-      prisma.watchEvent.findMany({
-        where: { userId: req.user.id },
-        orderBy: { serverTs: 'desc' },
-        include: { video: true },
-        take: 50,
-      }),
-      prisma.video.findMany({
-        orderBy: { createdAt: 'desc' },
-        include: {
-          summaries: {
-            where: { userId: req.user.id },
-          },
-        },
-      }),
-    ]);
+    res.json(await getUserOverview(req.user.id));
+  } catch (error) {
+    next(error);
+  }
+});
 
-    const totalActiveSeconds = summaries.reduce((total, row) => total + row.activeWatchSeconds, 0);
-    const totalPauseCount = summaries.reduce((total, row) => total + row.pauseCount, 0);
-    const totalSeekCount = summaries.reduce((total, row) => total + row.seekCount, 0);
-
-    res.json({
-      totals: { totalActiveSeconds, totalPauseCount, totalSeekCount },
-      summaries,
-      recentEvents,
-      videos,
-    });
+analyticsRouter.get('/time-map', async (req, res, next) => {
+  try {
+    res.json(await getUserTimeMap(req.user.id, req.query.date ? new Date(req.query.date) : new Date()));
   } catch (error) {
     next(error);
   }
