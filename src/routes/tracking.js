@@ -19,37 +19,62 @@ const optionalString = z.preprocess(
   z.string().optional(),
 );
 
-const eventSchema = z.object({
-  eventType: z.enum([
-    'PLAY',
-    'PAUSE',
-    'SEEK',
-    'BUFFER',
-    'END',
-    'TAB_HIDDEN',
-    'TAB_VISIBLE',
-    'WINDOW_BLUR',
-    'WINDOW_FOCUS',
-    'IDLE_START',
-    'IDLE_END',
-    'FLUSH',
-  ]),
-  videoTimeSec: optionalNumber,
-  fromTimeSec: optionalNumber,
-  toTimeSec: optionalNumber,
-  clientTs: z.string().datetime(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
-});
+const watchEventTypes = new Set([
+  'PLAY',
+  'PAUSE',
+  'SEEK',
+  'BUFFER',
+  'END',
+  'TAB_HIDDEN',
+  'TAB_VISIBLE',
+  'WINDOW_BLUR',
+  'WINDOW_FOCUS',
+  'IDLE_START',
+  'IDLE_END',
+  'FLUSH',
+]);
 
 const ingestSchema = z.object({
-  videoId: z.string(),
+  videoId: z.string().min(1),
   sessionId: optionalString,
-  events: z.array(eventSchema).default([]),
-  heatmapTicks: z.record(z.string(), z.number().int().positive()).default({}),
+  events: z.array(z.record(z.string(), z.unknown())).default([]),
+  heatmapTicks: z.record(z.string(), z.unknown()).default({}),
 });
 
 function startOfUtcDay(date = new Date()) {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+function finiteNumberOrUndefined(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
+}
+
+function normalizeClientTs(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? new Date() : date;
+}
+
+function normalizeEvents(events) {
+  return events
+    .filter((event) => watchEventTypes.has(event.eventType))
+    .map((event) => ({
+      eventType: event.eventType,
+      videoTimeSec: finiteNumberOrUndefined(event.videoTimeSec),
+      fromTimeSec: finiteNumberOrUndefined(event.fromTimeSec),
+      toTimeSec: finiteNumberOrUndefined(event.toTimeSec),
+      clientTs: normalizeClientTs(event.clientTs),
+      metadata: event.metadata && typeof event.metadata === 'object' ? event.metadata : undefined,
+    }));
+}
+
+function normalizeHeatmapTicks(ticks) {
+  return Object.entries(ticks)
+    .map(([second, count]) => ({
+      second: Number(second),
+      count: Math.floor(Number(count)),
+    }))
+    .filter((entry) => Number.isInteger(entry.second) && entry.second >= 0 && entry.count > 0);
 }
 
 trackingRouter.use(requireAuth);
@@ -113,18 +138,17 @@ trackingRouter.post('/ingest', async (req, res, next) => {
   try {
     const body = ingestSchema.parse(req.body);
     const day = startOfUtcDay();
-    const heatmapEntries = Object.entries(body.heatmapTicks)
-      .map(([second, count]) => ({ second: Number(second), count }))
-      .filter((entry) => Number.isInteger(entry.second) && entry.second >= 0 && entry.count > 0);
+    const events = normalizeEvents(body.events);
+    const heatmapEntries = normalizeHeatmapTicks(body.heatmapTicks);
 
     const activeWatchSeconds = heatmapEntries.reduce((total, entry) => total + entry.count, 0);
-    const pauseCount = body.events.filter((event) => event.eventType === 'PAUSE').length;
-    const seekCount = body.events.filter((event) => event.eventType === 'SEEK').length;
+    const pauseCount = events.filter((event) => event.eventType === 'PAUSE').length;
+    const seekCount = events.filter((event) => event.eventType === 'SEEK').length;
 
     await prisma.$transaction(async (tx) => {
-      if (body.events.length > 0) {
+      if (events.length > 0) {
         await tx.watchEvent.createMany({
-          data: body.events.map((event) => ({
+          data: events.map((event) => ({
             userId: req.user.id,
             videoId: body.videoId,
             sessionId: body.sessionId,
@@ -132,7 +156,7 @@ trackingRouter.post('/ingest', async (req, res, next) => {
             videoTimeSec: event.videoTimeSec,
             fromTimeSec: event.fromTimeSec,
             toTimeSec: event.toTimeSec,
-            clientTs: new Date(event.clientTs),
+            clientTs: event.clientTs,
             metadata: event.metadata,
           })),
         });
@@ -184,7 +208,7 @@ trackingRouter.post('/ingest', async (req, res, next) => {
     });
 
     res.json({
-      acceptedEvents: body.events.length,
+      acceptedEvents: events.length,
       acceptedHeatmapTicks: heatmapEntries.length,
       activeWatchSeconds,
     });
