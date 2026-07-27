@@ -384,6 +384,37 @@ function computeResumeVideo(videoMetrics) {
     .sort((a, b) => b.lastWatchedPosition - a.lastWatchedPosition)[0] || null;
 }
 
+function publicLearnerId(userId) {
+  return `LRN-${userId.slice(-6).toUpperCase()}`;
+}
+
+function computeGameProfile(metrics) {
+  const xp = Math.round(
+    metrics.learningTime.trueActiveStudySeconds / 60 * 10
+    + metrics.learningTime.studyStreakDays * 50
+    + metrics.learningProgress.completedVideos * 100
+    + metrics.charts.insightCards.focusScore * 5,
+  );
+  const level = Math.max(1, Math.floor(Math.sqrt(Math.max(0, xp)) / 3) + 1);
+  const nextLevelXp = Math.pow(level * 3, 2);
+  const badges = [];
+
+  if (metrics.learningTime.studyStreakDays >= 3) badges.push({ key: 'streak_3', label: '3 Day Streak' });
+  if (metrics.learningTime.studyStreakDays >= 7) badges.push({ key: 'streak_7', label: 'Weekly Warrior' });
+  if (metrics.learningTime.trueActiveStudySeconds >= 60 * 60) badges.push({ key: 'hour_1', label: 'First Study Hour' });
+  if (metrics.learningProgress.completedVideos >= 1) badges.push({ key: 'first_complete', label: 'Video Finisher' });
+  if (metrics.charts.insightCards.focusScore >= 80) badges.push({ key: 'focused', label: 'Deep Focus' });
+  if (metrics.videoCompletion.some((video) => video.rewatchedSeconds >= 60)) badges.push({ key: 'rewatcher', label: 'Revision Master' });
+
+  return {
+    xp,
+    level,
+    nextLevelXp,
+    levelProgressPercent: Math.min(100, Math.round((xp / Math.max(1, nextLevelXp)) * 100)),
+    badges,
+  };
+}
+
 function computeAlerts(events, summaries, videoMetrics, playlistMetrics) {
   const latestEvent = [...events].sort((a, b) => b.serverTs - a.serverTs)[0];
   const daysSinceActive = latestEvent ? Math.floor((Date.now() - latestEvent.serverTs.getTime()) / DAY_MS) : null;
@@ -464,7 +495,7 @@ export async function getAdvancedUserMetrics(userId) {
     learningProgress: progress,
   };
 
-  return {
+  const response = {
     user,
     generatedAt: new Date(),
     learningTime,
@@ -507,6 +538,13 @@ export async function getAdvancedUserMetrics(userId) {
       insightCards: computeInsightCards(common),
     },
   };
+
+  response.game = {
+    publicLearnerId: publicLearnerId(user.id),
+    ...computeGameProfile(response),
+  };
+
+  return response;
 }
 
 export async function getAdminComparisonMetrics() {
@@ -524,6 +562,7 @@ export async function getAdminComparisonMetrics() {
       : 0;
     rows.push({
       user,
+      publicLearnerId: publicLearnerId(user.id),
       activeStudySeconds: metrics.learningTime.trueActiveStudySeconds,
       consistencyScore: metrics.learningTime.studyStreakDays,
       playlistProgressPercent: metrics.playlistMetrics.length
@@ -543,6 +582,7 @@ export async function getAdminComparisonMetrics() {
         rewatch: Math.min(100, sum(metrics.videoCompletion, (video) => video.rewatchedSeconds) / 10),
         idle: Math.max(0, 100 - Math.min(100, metrics.learningTime.idleSeconds / 60)),
       },
+      game: metrics.game,
     });
   }
 
@@ -596,11 +636,15 @@ export async function getLearnerLeaderboard() {
   return {
     leaderboard: comparison.userComparison.map((row) => ({
       userId: row.user.id,
+      publicLearnerId: row.publicLearnerId,
       name: row.user.name,
       activeStudySeconds: row.activeStudySeconds,
       consistencyScore: row.consistencyScore,
       completionRatePercent: row.completionRatePercent,
       playlistProgressPercent: row.playlistProgressPercent,
+      xp: row.game?.xp || 0,
+      level: row.game?.level || 1,
+      badges: row.game?.badges || [],
       rankScore: row.activeStudySeconds + row.consistencyScore * 60 + row.completionRatePercent * 30,
     })).sort((a, b) => b.rankScore - a.rankScore),
   };
