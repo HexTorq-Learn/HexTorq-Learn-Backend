@@ -112,6 +112,11 @@ adminRouter.post('/users', async (req, res, next) => {
 adminRouter.patch('/users/:id', async (req, res, next) => {
   try {
     const body = updateUserSchema.parse(req.body);
+
+    if (req.user.id === req.params.id && body.role && body.role !== 'ADMIN') {
+      return res.status(400).json({ message: 'Cannot remove admin role from your own account' });
+    }
+
     const data = {
       ...(body.name ? { name: body.name } : {}),
       ...(body.email ? { email: body.email.toLowerCase() } : {}),
@@ -139,6 +144,10 @@ adminRouter.patch('/users/:id', async (req, res, next) => {
 
 adminRouter.delete('/users/:id', async (req, res, next) => {
   try {
+    if (req.user.id === req.params.id) {
+      return res.status(400).json({ message: 'Cannot delete your own account while logged in' });
+    }
+
     const adminCount = await prisma.user.count({ where: { role: 'ADMIN' } });
     const user = await prisma.user.findUnique({ where: { id: req.params.id } });
 

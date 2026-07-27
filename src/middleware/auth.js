@@ -2,6 +2,8 @@ import jwt from 'jsonwebtoken';
 import { prisma } from '../prisma.js';
 
 export async function requireAuth(req, res, next) {
+  let payload;
+
   try {
     const header = req.headers.authorization || '';
     const token = header.startsWith('Bearer ') ? header.slice(7) : null;
@@ -10,20 +12,25 @@ export async function requireAuth(req, res, next) {
       return res.status(401).json({ message: 'Missing auth token' });
     }
 
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    payload = jwt.verify(token, process.env.JWT_SECRET);
+  } catch {
+    return res.status(401).json({ message: 'Invalid auth token' });
+  }
+
+  try {
     const user = await prisma.user.findUnique({
       where: { id: payload.sub },
       select: { id: true, name: true, email: true, role: true },
     });
 
     if (!user) {
-      return res.status(401).json({ message: 'Invalid auth token' });
+      return res.status(401).json({ message: 'Session user no longer exists' });
     }
 
     req.user = user;
-    next();
-  } catch {
-    return res.status(401).json({ message: 'Invalid auth token' });
+    return next();
+  } catch (error) {
+    return next(error);
   }
 }
 
