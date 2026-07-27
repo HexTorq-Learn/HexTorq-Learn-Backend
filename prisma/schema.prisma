@@ -1,0 +1,120 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  STUDENT
+}
+
+enum WatchEventType {
+  PLAY
+  PAUSE
+  SEEK
+  BUFFER
+  END
+  TAB_HIDDEN
+  TAB_VISIBLE
+  WINDOW_BLUR
+  WINDOW_FOCUS
+  IDLE_START
+  IDLE_END
+  FLUSH
+}
+
+model User {
+  id           String              @id @default(cuid())
+  name         String
+  email        String              @unique
+  passwordHash String
+  role         UserRole            @default(STUDENT)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  sessions     WatchSession[]
+  events       WatchEvent[]
+  heatmap      VideoSecondHeatmap[]
+  summaries    DailyWatchSummary[]
+}
+
+model Video {
+  id          String              @id @default(cuid())
+  youtubeId   String              @unique
+  title       String
+  url         String
+  durationSec Int?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  sessions    WatchSession[]
+  events      WatchEvent[]
+  heatmap     VideoSecondHeatmap[]
+  summaries   DailyWatchSummary[]
+}
+
+model WatchSession {
+  id        String       @id @default(cuid())
+  userId    String
+  videoId   String?
+  loginAt   DateTime     @default(now())
+  logoutAt  DateTime?
+  userAgent String?
+  ipAddress String?
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  video     Video?       @relation(fields: [videoId], references: [id], onDelete: SetNull)
+  events    WatchEvent[]
+}
+
+model WatchEvent {
+  id           String         @id @default(cuid())
+  userId       String
+  videoId      String
+  sessionId    String?
+  eventType    WatchEventType
+  videoTimeSec Float?
+  fromTimeSec  Float?
+  toTimeSec    Float?
+  clientTs     DateTime
+  serverTs     DateTime       @default(now())
+  metadata     Json?
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  video        Video          @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  session      WatchSession?  @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([userId, videoId, serverTs])
+  @@index([eventType])
+}
+
+model VideoSecondHeatmap {
+  id         String   @id @default(cuid())
+  userId     String
+  videoId    String
+  second     Int
+  watchCount Int      @default(0)
+  updatedAt  DateTime @updatedAt
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  video      Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, videoId, second])
+  @@index([videoId, second])
+}
+
+model DailyWatchSummary {
+  id                 String   @id @default(cuid())
+  userId             String
+  videoId            String
+  date               DateTime
+  activeWatchSeconds Int      @default(0)
+  pauseCount         Int      @default(0)
+  seekCount          Int      @default(0)
+  sessionCount       Int      @default(0)
+  updatedAt          DateTime @updatedAt
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  video              Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, videoId, date])
+  @@index([userId, date])
+}
