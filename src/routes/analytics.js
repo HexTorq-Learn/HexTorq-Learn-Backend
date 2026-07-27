@@ -2,6 +2,7 @@ import express from 'express';
 import { prisma } from '../prisma.js';
 import { requireAuth } from '../middleware/auth.js';
 import { getUserOverview, getUserTimeMap } from '../services/analytics.js';
+import { getAdvancedUserMetrics } from '../services/advancedMetrics.js';
 
 export const analyticsRouter = express.Router();
 
@@ -18,6 +19,14 @@ analyticsRouter.get('/overview', async (req, res, next) => {
 analyticsRouter.get('/time-map', async (req, res, next) => {
   try {
     res.json(await getUserTimeMap(req.user.id, req.query.date ? new Date(req.query.date) : new Date()));
+  } catch (error) {
+    next(error);
+  }
+});
+
+analyticsRouter.get('/advanced', async (req, res, next) => {
+  try {
+    res.json(await getAdvancedUserMetrics(req.user.id));
   } catch (error) {
     next(error);
   }

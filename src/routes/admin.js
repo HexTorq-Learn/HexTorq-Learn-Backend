@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../prisma.js';
 import { requireAdmin, requireAuth } from '../middleware/auth.js';
 import { getUserTimeMap } from '../services/analytics.js';
+import { getAdminComparisonMetrics, getAdvancedUserMetrics } from '../services/advancedMetrics.js';
 
 export const adminRouter = express.Router();
 
@@ -259,6 +260,26 @@ adminRouter.get('/analytics/users/:id', async (req, res, next) => {
 adminRouter.get('/analytics/users/:id/time-map', async (req, res, next) => {
   try {
     res.json(await getUserTimeMap(req.params.id, req.query.date ? new Date(req.query.date) : new Date()));
+  } catch (error) {
+    next(error);
+  }
+});
+
+adminRouter.get('/analytics/users/:id/advanced', async (req, res, next) => {
+  try {
+    const metrics = await getAdvancedUserMetrics(req.params.id);
+    if (!metrics) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    return res.json(metrics);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+adminRouter.get('/analytics/comparison', async (_req, res, next) => {
+  try {
+    res.json(await getAdminComparisonMetrics());
   } catch (error) {
     next(error);
   }
