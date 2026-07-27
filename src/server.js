@@ -36,6 +36,14 @@ app.use((error, _req, res, _next) => {
     return res.status(400).json({ message: 'Invalid request', issues: error.issues });
   }
 
+  if (
+    error.name === 'PrismaClientInitializationError'
+    || error.message?.includes("Can't reach database server")
+  ) {
+    console.error(error);
+    return res.status(503).json({ message: 'Database unavailable. Check PostgreSQL connection settings.' });
+  }
+
   console.error(error);
   return res.status(500).json({ message: 'Server error' });
 });
