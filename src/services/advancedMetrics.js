@@ -310,6 +310,80 @@ function computeProgress(summaries, videoMetrics) {
   };
 }
 
+function computeStreakCalendar(summaries) {
+  const daily = buildStudySeries(summaries, 'day');
+  return daily.map((row) => ({
+    date: row.key,
+    activeWatchSeconds: row.activeWatchSeconds,
+    level: Math.min(4, Math.ceil(row.activeWatchSeconds / (15 * 60))),
+  }));
+}
+
+function computeCompletionFunnel(videoMetrics) {
+  const total = Math.max(1, videoMetrics.length);
+  const steps = [
+    { key: 'assigned', label: 'Assigned', count: videoMetrics.length },
+    { key: 'started', label: 'Started', count: videoMetrics.filter((video) => video.percentWatched > 0).length },
+    { key: 'watched25', label: '25%', count: videoMetrics.filter((video) => video.percentWatched >= 25).length },
+    { key: 'watched50', label: '50%', count: videoMetrics.filter((video) => video.percentWatched >= 50).length },
+    { key: 'watched75', label: '75%', count: videoMetrics.filter((video) => video.percentWatched >= 75).length },
+    { key: 'completed', label: 'Completed', count: videoMetrics.filter((video) => video.percentWatched >= 90).length },
+  ];
+
+  return steps.map((step) => ({
+    ...step,
+    percent: Math.round((step.count / total) * 100),
+  }));
+}
+
+function computeFocusSplit(totalActiveSeconds, pauseTimeSeconds, idleTimeSeconds, unfocusedTimeSeconds) {
+  return [
+    { key: 'active', label: 'Active', seconds: totalActiveSeconds },
+    { key: 'paused', label: 'Paused', seconds: pauseTimeSeconds },
+    { key: 'idle', label: 'Idle', seconds: idleTimeSeconds },
+    { key: 'unfocused', label: 'Out of focus', seconds: unfocusedTimeSeconds },
+  ];
+}
+
+function computeInsightCards(metrics) {
+  const hardest = [...metrics.videoMetrics].sort((a, b) => b.hardTopicScore - a.hardTopicScore)[0];
+  const skipped = [...metrics.videoMetrics].sort((a, b) => b.forwardSkipCount - a.forwardSkipCount)[0];
+  const repeated = [...metrics.videoMetrics].sort((a, b) => b.mostReplayedSecond.watchCount - a.mostReplayedSecond.watchCount)[0];
+  const mostFocused = [...metrics.learningTime.dailySeries].sort((a, b) => b.activeWatchSeconds - a.activeWatchSeconds)[0];
+  const completionRate = metrics.videoMetrics.length
+    ? Math.round(sum(metrics.videoMetrics, (video) => video.percentWatched) / metrics.videoMetrics.length)
+    : 0;
+  const focusScore = Math.max(0, Math.min(100, metrics.learningTime.studyEfficiencyPercent - metrics.sessionQuality.distractionCount * 2));
+  const consistencyScore = Math.min(100, metrics.learningTime.studyStreakDays * 10);
+
+  return {
+    bestStudyHour: metrics.learningTime.bestStudyHour,
+    mostFocusedDay: mostFocused?.key || null,
+    mostDistractedDay: metrics.timeOfDay.mostConsistentDays.at(-1)?.date || null,
+    mostRepeatedVideoSection: repeated ? {
+      title: repeated.title,
+      second: repeated.mostReplayedSecond.second,
+      count: repeated.mostReplayedSecond.watchCount,
+    } : null,
+    hardestVideo: hardest ? { title: hardest.title, score: hardest.hardTopicScore } : null,
+    mostSkippedVideo: skipped ? { title: skipped.title, skips: skipped.forwardSkipCount } : null,
+    completionRate,
+    focusScore,
+    consistencyScore,
+    stuckSegmentAlert: metrics.alerts.find((alert) => alert.type === 'repeated_section') || null,
+    inactiveUserAlert: metrics.alerts.find((alert) => alert.type === 'inactive_user') || null,
+    todayVsYesterday: metrics.learningProgress.todayVsYesterday,
+    thisWeekVsLastWeek: metrics.learningProgress.thisWeekVsLastWeek,
+    estimatedPlaylistCompletionDays: metrics.learningProgress.estimatedCourseCompletionDays,
+  };
+}
+
+function computeResumeVideo(videoMetrics) {
+  return [...videoMetrics]
+    .filter((video) => video.percentWatched > 0 && video.percentWatched < 90)
+    .sort((a, b) => b.lastWatchedPosition - a.lastWatchedPosition)[0] || null;
+}
+
 function computeAlerts(events, summaries, videoMetrics, playlistMetrics) {
   const latestEvent = [...events].sort((a, b) => b.serverTs - a.serverTs)[0];
   const daysSinceActive = latestEvent ? Math.floor((Date.now() - latestEvent.serverTs.getTime()) / DAY_MS) : null;
@@ -361,25 +435,39 @@ export async function getAdvancedUserMetrics(userId) {
   const videoMetrics = computeVideoMetrics(videos, heatmapByVideo, eventsByVideo, summariesByVideo);
   const playlistMetrics = computePlaylistMetrics(playlists, videoMetrics);
   const progress = computeProgress(summaries, videoMetrics);
+  const learningTime = {
+    trueActiveStudySeconds: totalActiveSeconds,
+    totalTabOpenSeconds: tabOpenSeconds,
+    focusedSeconds: Math.max(0, tabOpenSeconds - unfocusedTimeSeconds),
+    unfocusedSeconds: unfocusedTimeSeconds,
+    idleSeconds: idleTimeSeconds,
+    pauseSeconds: pauseTimeSeconds,
+    bufferingSeconds: bufferingTimeSeconds,
+    studyEfficiencyPercent: tabOpenSeconds ? Math.round((totalActiveSeconds / tabOpenSeconds) * 100) : 0,
+    dailySeries: buildStudySeries(summaries, 'day'),
+    weeklySeries: buildStudySeries(summaries, 'week'),
+    monthlySeries: buildStudySeries(summaries, 'month'),
+    studyStreakDays: longestStreak(summaries.filter((row) => row.activeWatchSeconds > 0).map((row) => formatDateKey(row.date))),
+    ...computeTimeOfDay(events, summaries),
+  };
+  const sessionQuality = computeSessionMetrics(sessions, events);
+  const timeOfDay = computeTimeOfDay(events, summaries);
+  const behavior = computeBehavior(events, totalActiveSeconds);
+  const alerts = computeAlerts(events, summaries, videoMetrics, playlistMetrics);
+  const common = {
+    learningTime,
+    videoMetrics,
+    sessionQuality,
+    timeOfDay,
+    behavior,
+    alerts,
+    learningProgress: progress,
+  };
 
   return {
     user,
     generatedAt: new Date(),
-    learningTime: {
-      trueActiveStudySeconds: totalActiveSeconds,
-      totalTabOpenSeconds: tabOpenSeconds,
-      focusedSeconds: Math.max(0, tabOpenSeconds - unfocusedTimeSeconds),
-      unfocusedSeconds: unfocusedTimeSeconds,
-      idleSeconds: idleTimeSeconds,
-      pauseSeconds: pauseTimeSeconds,
-      bufferingSeconds: bufferingTimeSeconds,
-      studyEfficiencyPercent: tabOpenSeconds ? Math.round((totalActiveSeconds / tabOpenSeconds) * 100) : 0,
-      dailySeries: buildStudySeries(summaries, 'day'),
-      weeklySeries: buildStudySeries(summaries, 'week'),
-      monthlySeries: buildStudySeries(summaries, 'month'),
-      studyStreakDays: longestStreak(summaries.filter((row) => row.activeWatchSeconds > 0).map((row) => formatDateKey(row.date))),
-      ...computeTimeOfDay(events, summaries),
-    },
+    learningTime,
     videoCompletion: videoMetrics,
     rewatchDifficulty: videoMetrics.map((video) => ({
       videoId: video.id,
@@ -397,12 +485,27 @@ export async function getAdvancedUserMetrics(userId) {
       rewindDistanceSec: video.rewindDistanceSec,
       forwardSkipCount: video.forwardSkipCount,
     })),
-    sessionQuality: computeSessionMetrics(sessions, events),
-    timeOfDay: computeTimeOfDay(events, summaries),
-    behavior: computeBehavior(events, totalActiveSeconds),
+    sessionQuality,
+    timeOfDay,
+    behavior,
     playlistMetrics,
     learningProgress: progress,
-    alerts: computeAlerts(events, summaries, videoMetrics, playlistMetrics),
+    alerts,
+    charts: {
+      streakCalendar: computeStreakCalendar(summaries),
+      completionFunnel: computeCompletionFunnel(videoMetrics),
+      focusIdleStack: computeFocusSplit(totalActiveSeconds, pauseTimeSeconds, idleTimeSeconds, unfocusedTimeSeconds),
+      playlistProgress: playlistMetrics,
+      videoCompletionList: videoMetrics,
+      repeatedSections: videoMetrics.flatMap((video) => video.repeatedRanges.map((range) => ({ videoId: video.id, title: video.title, ...range }))).slice(0, 30),
+      dailyGoal: {
+        targetSeconds: 60 * 60,
+        actualSeconds: progress.todayVsYesterday.todaySeconds,
+        percent: progress.watchTargetCompletionPercent,
+      },
+      resumeVideo: computeResumeVideo(videoMetrics),
+      insightCards: computeInsightCards(common),
+    },
   };
 }
 
@@ -433,7 +536,35 @@ export async function getAdminComparisonMetrics() {
       stuckSegments: sum(metrics.rewatchDifficulty, (video) => video.repeated5xRanges.length),
       dailySeries: metrics.learningTime.dailySeries,
       hourlyDistribution: metrics.timeOfDay.hourlyDistribution,
+      radar: {
+        focus: metrics.charts.insightCards.focusScore,
+        completion: completionAvg,
+        consistency: Math.min(100, metrics.consistencyScore || metrics.learningTime.studyStreakDays * 10),
+        rewatch: Math.min(100, sum(metrics.videoCompletion, (video) => video.rewatchedSeconds) / 10),
+        idle: Math.max(0, 100 - Math.min(100, metrics.learningTime.idleSeconds / 60)),
+      },
     });
+  }
+
+  const allHourly = Array.from({ length: 24 }, (_, hour) => ({
+    hour,
+    events: sum(rows, (row) => row.hourlyDistribution.find((bucket) => bucket.hour === hour)?.events || 0),
+  }));
+  const dailyActiveMap = {};
+  for (const row of rows) {
+    for (const day of row.dailySeries) {
+      dailyActiveMap[day.key] = dailyActiveMap[day.key] || { date: day.key, activeUsers: 0, totalStudySeconds: 0 };
+      if (day.activeWatchSeconds > 0) dailyActiveMap[day.key].activeUsers += 1;
+      dailyActiveMap[day.key].totalStudySeconds += day.activeWatchSeconds;
+    }
+  }
+  const playlistRows = await prisma.playlist.findMany({ include: { videos: true } });
+  const cohortMap = {};
+  const cohortUsers = await prisma.user.findMany({ select: { id: true, createdAt: true } });
+  for (const user of cohortUsers) {
+    const cohort = periodKey(user.createdAt, 'week');
+    cohortMap[cohort] = cohortMap[cohort] || { cohort, users: 0, day1: 0, day2: 0, day7: 0 };
+    cohortMap[cohort].users += 1;
   }
 
   return {
@@ -447,5 +578,30 @@ export async function getAdminComparisonMetrics() {
     lowCompletionUsers: rows.filter((row) => row.lowCompletion),
     stuckUsers: rows.filter((row) => row.stuckSegments > 0),
     userComparison: rows,
+    charts: {
+      allUsers24HourHeatmap: allHourly,
+      dailyActiveLearners: Object.values(dailyActiveMap).sort((a, b) => a.date.localeCompare(b.date)),
+      totalStudyTimeByDay: Object.values(dailyActiveMap).sort((a, b) => a.date.localeCompare(b.date)),
+      playlistCompletion: playlistRows.map((playlist) => {
+        const related = rows.flatMap((row) => row.dailySeries).length;
+        return { id: playlist.id, name: playlist.name, videoCount: playlist.videos.length, activityRows: related };
+      }),
+      cohortRetention: Object.values(cohortMap).sort((a, b) => a.cohort.localeCompare(b.cohort)),
+    },
+  };
+}
+
+export async function getLearnerLeaderboard() {
+  const comparison = await getAdminComparisonMetrics();
+  return {
+    leaderboard: comparison.userComparison.map((row) => ({
+      userId: row.user.id,
+      name: row.user.name,
+      activeStudySeconds: row.activeStudySeconds,
+      consistencyScore: row.consistencyScore,
+      completionRatePercent: row.completionRatePercent,
+      playlistProgressPercent: row.playlistProgressPercent,
+      rankScore: row.activeStudySeconds + row.consistencyScore * 60 + row.completionRatePercent * 30,
+    })).sort((a, b) => b.rankScore - a.rankScore),
   };
 }
