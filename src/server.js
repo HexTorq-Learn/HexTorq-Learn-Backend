@@ -3,7 +3,6 @@ import cors from 'cors';
 import express from 'express';
 import helmet from 'helmet';
 import { createServer } from 'http';
-import morgan from 'morgan';
 import { ZodError } from 'zod';
 import { authRouter } from './routes/auth.js';
 import { videosRouter } from './routes/videos.js';
@@ -14,6 +13,7 @@ import { playlistsRouter } from './routes/playlists.js';
 import { initRealtime } from './realtime.js';
 import { corsOrigin } from './cors.js';
 
+const PROJECT_NAME = 'HexTorq Learn Backend';
 const app = express();
 const port = Number(process.env.PORT || 4000);
 const corsOptions = {
@@ -21,14 +21,41 @@ const corsOptions = {
   credentials: true,
 };
 
+function requestLogger(req, res, next) {
+  const startedAt = process.hrtime.bigint();
+  res.on('finish', () => {
+    const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+    console.log(JSON.stringify({
+      project: PROJECT_NAME,
+      method: req.method,
+      path: req.originalUrl,
+      statusCode: res.statusCode,
+      durationMs: Math.round(durationMs),
+      origin: req.get('origin') || null,
+      ip: req.ip,
+      userAgent: req.get('user-agent') || null,
+    }));
+  });
+  next();
+}
+
+function healthPayload() {
+  return {
+    status: 'ok',
+    project: PROJECT_NAME,
+    service: 'hextorq-learn-backend',
+    timestamp: new Date().toISOString(),
+  };
+}
+
 app.use(helmet());
+app.use(requestLogger);
 app.options(/.*/, cors(corsOptions));
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '2mb' }));
-app.use(morgan('dev'));
 
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok' });
+  res.json(healthPayload());
 });
 
 function mountApi(prefix = '') {
@@ -41,7 +68,7 @@ function mountApi(prefix = '') {
 }
 
 app.get('/hextorq-learn/health', (_req, res) => {
-  res.json({ status: 'ok' });
+  res.json(healthPayload());
 });
 
 mountApi();
