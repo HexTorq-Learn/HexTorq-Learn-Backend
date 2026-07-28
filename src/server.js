@@ -12,13 +12,14 @@ import { analyticsRouter } from './routes/analytics.js';
 import { adminRouter } from './routes/admin.js';
 import { playlistsRouter } from './routes/playlists.js';
 import { initRealtime } from './realtime.js';
+import { corsOrigin } from './cors.js';
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
 
 app.use(helmet());
 app.use(cors({
-  origin: process.env.FRONTEND_ORIGIN || 'http://localhost:5173',
+  origin: corsOrigin,
   credentials: true,
 }));
 app.use(express.json({ limit: '2mb' }));

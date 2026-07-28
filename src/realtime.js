@@ -1,13 +1,14 @@
 import jwt from 'jsonwebtoken';
 import { Server } from 'socket.io';
 import { prisma } from './prisma.js';
+import { getAllowedOrigins } from './cors.js';
 
 let io;
 
 export function initRealtime(server) {
   io = new Server(server, {
     cors: {
-      origin: process.env.FRONTEND_ORIGIN || 'http://localhost:5173',
+      origin: getAllowedOrigins(),
       credentials: true,
     },
   });
