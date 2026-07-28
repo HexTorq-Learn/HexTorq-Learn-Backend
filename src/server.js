@@ -16,12 +16,14 @@ import { corsOrigin } from './cors.js';
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
-
-app.use(helmet());
-app.use(cors({
+const corsOptions = {
   origin: corsOrigin,
   credentials: true,
-}));
+};
+
+app.use(helmet());
+app.options(/.*/, cors(corsOptions));
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '2mb' }));
 app.use(morgan('dev'));
 
