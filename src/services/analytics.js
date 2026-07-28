@@ -1,20 +1,61 @@
 import { prisma } from '../prisma.js';
 
+const APP_TIME_ZONE = process.env.APP_TIME_ZONE || 'Asia/Kolkata';
+
+function zonedParts(date) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: APP_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(date).reduce((acc, part) => {
+    acc[part.type] = part.value;
+    return acc;
+  }, {});
+
+  return {
+    year: Number(parts.year),
+    month: Number(parts.month),
+    day: Number(parts.day),
+    hour: Number(parts.hour === '24' ? '0' : parts.hour),
+    minute: Number(parts.minute),
+    second: Number(parts.second),
+  };
+}
+
+function zonedOffsetMs(date) {
+  const parts = zonedParts(date);
+  const zonedAsUtc = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+  return zonedAsUtc - date.getTime();
+}
+
+export function formatDateKey(date = new Date()) {
+  const parts = zonedParts(date);
+  return `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
+}
+
 export function startOfUtcDay(date = new Date()) {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const parts = zonedParts(date);
+  const utcGuess = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
+  return new Date(utcGuess.getTime() - zonedOffsetMs(utcGuess));
 }
 
 export function endOfUtcDay(date = new Date()) {
   const start = startOfUtcDay(date);
-  return new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  return startOfUtcDay(new Date(start.getTime() + 36 * 60 * 60 * 1000));
 }
 
 export function formatClockParts(date) {
+  const parts = zonedParts(date);
   return {
-    hour: date.getHours(),
-    minute: date.getMinutes(),
-    second: date.getSeconds(),
-    clock: date.toLocaleTimeString('en-GB', { hour12: false }),
+    hour: parts.hour,
+    minute: parts.minute,
+    second: parts.second,
+    clock: date.toLocaleTimeString('en-US', { timeZone: APP_TIME_ZONE, hour12: true }),
   };
 }
 
@@ -101,5 +142,5 @@ export async function getUserTimeMap(userId, date = new Date()) {
     },
   }));
 
-  return { date: dayStart, hours, timeline };
+  return { date: dayStart, dateKey: formatDateKey(dayStart), timeZone: APP_TIME_ZONE, hours, timeline };
 }

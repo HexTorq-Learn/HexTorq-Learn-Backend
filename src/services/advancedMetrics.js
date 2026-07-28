@@ -1,15 +1,11 @@
 import { prisma } from '../prisma.js';
-import { endOfUtcDay, formatClockParts, startOfUtcDay } from './analytics.js';
+import { formatClockParts, formatDateKey, startOfUtcDay } from './analytics.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function secondsBetween(start, end = new Date()) {
   if (!start) return 0;
   return Math.max(0, Math.floor(((end || new Date()).getTime() - start.getTime()) / 1000));
-}
-
-function formatDateKey(date) {
-  return date.toISOString().slice(0, 10);
 }
 
 function groupBy(items, getKey) {
@@ -81,14 +77,21 @@ function longestStreak(dateKeys) {
 }
 
 function periodKey(date, period) {
-  if (period === 'month') return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+  const dateKey = formatDateKey(date);
+  if (period === 'month') return dateKey.slice(0, 7);
   if (period === 'week') {
-    const start = startOfUtcDay(date);
+    const start = new Date(`${dateKey}T00:00:00.000Z`);
     const day = start.getUTCDay() || 7;
     start.setUTCDate(start.getUTCDate() - day + 1);
-    return formatDateKey(start);
+    return start.toISOString().slice(0, 10);
   }
-  return formatDateKey(startOfUtcDay(date));
+  return dateKey;
+}
+
+function formatHourLabel(hour) {
+  const suffix = hour >= 12 ? 'PM' : 'AM';
+  const displayHour = hour % 12 || 12;
+  return `${displayHour}:00 ${suffix}`;
 }
 
 function buildStudySeries(summaries, period) {
@@ -197,7 +200,7 @@ function computeTimeOfDay(events, summaries) {
   const eventDays = {};
 
   for (const event of events) {
-    const hour = event.serverTs.getHours();
+    const hour = formatClockParts(event.serverTs).hour;
     hourCounts[hour].events += 1;
     const day = formatDateKey(event.serverTs);
     eventDays[day] = (eventDays[day] || 0) + 1;
@@ -214,9 +217,9 @@ function computeTimeOfDay(events, summaries) {
   const lateNightEvents = sum(hourCounts.filter((row) => row.hour < 5), (row) => row.events);
 
   return {
-    bestStudyHour: best ? `${String(best.hour).padStart(2, '0')}:00` : null,
+    bestStudyHour: best ? formatHourLabel(best.hour) : null,
     mostFrequentLearningHour: best ? best.hour : null,
-    peakConcentrationWindow: best ? `${String(best.hour).padStart(2, '0')}:00-${String((best.hour + 1) % 24).padStart(2, '0')}:00` : null,
+    peakConcentrationWindow: best ? `${formatHourLabel(best.hour)}-${formatHourLabel((best.hour + 1) % 24)}` : null,
     lateNightStudyEvents: lateNightEvents,
     morningVsEvening: { morningEvents, eveningEvents },
     mostConsistentDays: Object.entries(eventDays).sort((a, b) => b[1] - a[1]).slice(0, 7).map(([date, events]) => ({ date, events })),
