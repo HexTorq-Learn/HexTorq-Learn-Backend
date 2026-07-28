@@ -29,12 +29,21 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
-app.use('/api/auth', authRouter);
-app.use('/api/playlists', playlistsRouter);
-app.use('/api/videos', videosRouter);
-app.use('/api/tracking', trackingRouter);
-app.use('/api/analytics', analyticsRouter);
-app.use('/api/admin', adminRouter);
+function mountApi(prefix = '') {
+  app.use(`${prefix}/api/auth`, authRouter);
+  app.use(`${prefix}/api/playlists`, playlistsRouter);
+  app.use(`${prefix}/api/videos`, videosRouter);
+  app.use(`${prefix}/api/tracking`, trackingRouter);
+  app.use(`${prefix}/api/analytics`, analyticsRouter);
+  app.use(`${prefix}/api/admin`, adminRouter);
+}
+
+app.get('/hextorq-learn/health', (_req, res) => {
+  res.json({ status: 'ok' });
+});
+
+mountApi();
+mountApi('/hextorq-learn');
 
 app.use((error, _req, res, _next) => {
   if (error instanceof ZodError) {
