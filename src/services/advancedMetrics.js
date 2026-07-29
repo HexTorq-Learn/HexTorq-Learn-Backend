@@ -391,30 +391,153 @@ function publicLearnerId(userId) {
   return `LRN-${userId.slice(-6).toUpperCase()}`;
 }
 
+function badgeDefinition(key, label, category, unlocked, progress, target, description) {
+  return {
+    key,
+    label,
+    category,
+    unlocked,
+    progress: Math.max(0, Math.min(target, Math.round(progress))),
+    target,
+    percent: Math.max(0, Math.min(100, Math.round((progress / Math.max(1, target)) * 100))),
+    description,
+  };
+}
+
+function buildBadges(metrics) {
+  const activeMinutes = Math.floor(metrics.learningTime.trueActiveStudySeconds / 60);
+  const activeHours = Math.floor(activeMinutes / 60);
+  const streak = metrics.learningTime.studyStreakDays;
+  const completed = metrics.learningProgress.completedVideos;
+  const partial = metrics.learningProgress.partiallyWatchedVideos;
+  const completionRate = metrics.charts.insightCards.completionRate;
+  const focusScore = metrics.charts.insightCards.focusScore;
+  const consistencyScore = metrics.charts.insightCards.consistencyScore;
+  const rewatchedMinutes = Math.floor(sum(metrics.videoCompletion, (video) => video.rewatchedSeconds) / 60);
+  const rewindCount = sum(metrics.videoCompletion, (video) => video.rewindCount);
+  const seekCount = sum(metrics.videoCompletion, (video) => video.rewindCount + video.forwardSkipCount);
+  const playlistCompletion = metrics.playlistMetrics.length
+    ? Math.round(sum(metrics.playlistMetrics, (playlist) => playlist.completionPercent) / metrics.playlistMetrics.length)
+    : 0;
+  const studiedDays = metrics.learningTime.dailySeries.filter((row) => row.activeWatchSeconds > 0).length;
+  const morningEvents = metrics.timeOfDay.morningVsEvening.morningEvents;
+  const eveningEvents = metrics.timeOfDay.morningVsEvening.eveningEvents;
+  const lateNight = metrics.timeOfDay.lateNightStudyEvents;
+  const lowIdle = Math.max(0, 100 - Math.floor(metrics.learningTime.idleSeconds / 60));
+  const activeSessions = metrics.sessionQuality.sessionCount;
+  const momentum = metrics.sessionQuality.studyMomentumScore;
+
+  return [
+    badgeDefinition('first_minute', 'First Minute', 'Time', activeMinutes >= 1, activeMinutes, 1, 'Study for 1 active minute'),
+    badgeDefinition('study_5m', 'Warm Start', 'Time', activeMinutes >= 5, activeMinutes, 5, 'Study for 5 active minutes'),
+    badgeDefinition('study_15m', 'Quarter Focus', 'Time', activeMinutes >= 15, activeMinutes, 15, 'Study for 15 active minutes'),
+    badgeDefinition('study_30m', 'Deep Start', 'Time', activeMinutes >= 30, activeMinutes, 30, 'Study for 30 active minutes'),
+    badgeDefinition('hour_1', 'First Study Hour', 'Time', activeHours >= 1, activeMinutes, 60, 'Study for 1 active hour'),
+    badgeDefinition('hour_3', 'Three Hour Climb', 'Time', activeHours >= 3, activeMinutes, 180, 'Study for 3 active hours'),
+    badgeDefinition('hour_5', 'Five Hour Focus', 'Time', activeHours >= 5, activeMinutes, 300, 'Study for 5 active hours'),
+    badgeDefinition('hour_10', 'Ten Hour Builder', 'Time', activeHours >= 10, activeMinutes, 600, 'Study for 10 active hours'),
+    badgeDefinition('hour_25', 'Course Grinder', 'Time', activeHours >= 25, activeMinutes, 1500, 'Study for 25 active hours'),
+    badgeDefinition('hour_50', 'Marathon Learner', 'Time', activeHours >= 50, activeMinutes, 3000, 'Study for 50 active hours'),
+    badgeDefinition('streak_1', 'Day One Streak', 'Streak', streak >= 1, streak, 1, 'Study for 1 day'),
+    badgeDefinition('streak_3', '3 Day Streak', 'Streak', streak >= 3, streak, 3, 'Study 3 days in a row'),
+    badgeDefinition('streak_5', '5 Day Rhythm', 'Streak', streak >= 5, streak, 5, 'Study 5 days in a row'),
+    badgeDefinition('streak_7', 'Weekly Warrior', 'Streak', streak >= 7, streak, 7, 'Study 7 days in a row'),
+    badgeDefinition('streak_14', 'Fortnight Focus', 'Streak', streak >= 14, streak, 14, 'Study 14 days in a row'),
+    badgeDefinition('streak_21', 'Habit Architect', 'Streak', streak >= 21, streak, 21, 'Study 21 days in a row'),
+    badgeDefinition('streak_30', 'Monthly Master', 'Streak', streak >= 30, streak, 30, 'Study 30 days in a row'),
+    badgeDefinition('days_3', 'Three Study Days', 'Consistency', studiedDays >= 3, studiedDays, 3, 'Study on 3 separate days'),
+    badgeDefinition('days_7', 'Seven Study Days', 'Consistency', studiedDays >= 7, studiedDays, 7, 'Study on 7 separate days'),
+    badgeDefinition('days_15', 'Fifteen Study Days', 'Consistency', studiedDays >= 15, studiedDays, 15, 'Study on 15 separate days'),
+    badgeDefinition('days_30', 'Thirty Study Days', 'Consistency', studiedDays >= 30, studiedDays, 30, 'Study on 30 separate days'),
+    badgeDefinition('consistency_25', 'Consistency Spark', 'Consistency', consistencyScore >= 25, consistencyScore, 25, 'Reach 25 consistency score'),
+    badgeDefinition('consistency_50', 'Consistency Core', 'Consistency', consistencyScore >= 50, consistencyScore, 50, 'Reach 50 consistency score'),
+    badgeDefinition('consistency_75', 'Consistency Engine', 'Consistency', consistencyScore >= 75, consistencyScore, 75, 'Reach 75 consistency score'),
+    badgeDefinition('consistency_100', 'Consistency Legend', 'Consistency', consistencyScore >= 100, consistencyScore, 100, 'Reach 100 consistency score'),
+    badgeDefinition('complete_1', 'Video Finisher', 'Completion', completed >= 1, completed, 1, 'Complete 1 video'),
+    badgeDefinition('complete_3', 'Triple Finisher', 'Completion', completed >= 3, completed, 3, 'Complete 3 videos'),
+    badgeDefinition('complete_5', 'Five Video Run', 'Completion', completed >= 5, completed, 5, 'Complete 5 videos'),
+    badgeDefinition('complete_10', 'Ten Video Run', 'Completion', completed >= 10, completed, 10, 'Complete 10 videos'),
+    badgeDefinition('complete_25', 'Playlist Crusher', 'Completion', completed >= 25, completed, 25, 'Complete 25 videos'),
+    badgeDefinition('partial_5', 'Explorer', 'Completion', partial >= 5, partial, 5, 'Start 5 videos'),
+    badgeDefinition('partial_15', 'Wide Explorer', 'Completion', partial >= 15, partial, 15, 'Start 15 videos'),
+    badgeDefinition('completion_25', '25% Course Mark', 'Completion', completionRate >= 25, completionRate, 25, 'Reach 25% average completion'),
+    badgeDefinition('completion_50', '50% Course Mark', 'Completion', completionRate >= 50, completionRate, 50, 'Reach 50% average completion'),
+    badgeDefinition('completion_75', '75% Course Mark', 'Completion', completionRate >= 75, completionRate, 75, 'Reach 75% average completion'),
+    badgeDefinition('completion_90', 'Completion Elite', 'Completion', completionRate >= 90, completionRate, 90, 'Reach 90% average completion'),
+    badgeDefinition('playlist_25', 'Playlist Starter', 'Playlist', playlistCompletion >= 25, playlistCompletion, 25, 'Reach 25% playlist progress'),
+    badgeDefinition('playlist_50', 'Playlist Halfway', 'Playlist', playlistCompletion >= 50, playlistCompletion, 50, 'Reach 50% playlist progress'),
+    badgeDefinition('playlist_75', 'Playlist Dominator', 'Playlist', playlistCompletion >= 75, playlistCompletion, 75, 'Reach 75% playlist progress'),
+    badgeDefinition('playlist_100', 'Playlist Conqueror', 'Playlist', playlistCompletion >= 100, playlistCompletion, 100, 'Complete a playlist'),
+    badgeDefinition('focus_25', 'Focus Spark', 'Focus', focusScore >= 25, focusScore, 25, 'Reach 25 focus score'),
+    badgeDefinition('focus_50', 'Focus Builder', 'Focus', focusScore >= 50, focusScore, 50, 'Reach 50 focus score'),
+    badgeDefinition('focus_75', 'Deep Focus', 'Focus', focusScore >= 75, focusScore, 75, 'Reach 75 focus score'),
+    badgeDefinition('focus_90', 'Laser Focus', 'Focus', focusScore >= 90, focusScore, 90, 'Reach 90 focus score'),
+    badgeDefinition('idle_low', 'Low Idle Learner', 'Focus', lowIdle >= 90, lowIdle, 90, 'Keep idle time low'),
+    badgeDefinition('revision_5m', 'Revision Starter', 'Revision', rewatchedMinutes >= 5, rewatchedMinutes, 5, 'Rewatch 5 minutes'),
+    badgeDefinition('revision_15m', 'Revision Builder', 'Revision', rewatchedMinutes >= 15, rewatchedMinutes, 15, 'Rewatch 15 minutes'),
+    badgeDefinition('revision_30m', 'Revision Master', 'Revision', rewatchedMinutes >= 30, rewatchedMinutes, 30, 'Rewatch 30 minutes'),
+    badgeDefinition('rewind_5', 'Rewind Curious', 'Revision', rewindCount >= 5, rewindCount, 5, 'Rewind 5 times'),
+    badgeDefinition('rewind_20', 'Rewind Analyst', 'Revision', rewindCount >= 20, rewindCount, 20, 'Rewind 20 times'),
+    badgeDefinition('rewind_50', 'Rewind Specialist', 'Revision', rewindCount >= 50, rewindCount, 50, 'Rewind 50 times'),
+    badgeDefinition('seek_25', 'Timeline Navigator', 'Behavior', seekCount >= 25, seekCount, 25, 'Use seeks 25 times'),
+    badgeDefinition('seek_100', 'Timeline Expert', 'Behavior', seekCount >= 100, seekCount, 100, 'Use seeks 100 times'),
+    badgeDefinition('sessions_3', 'Session Starter', 'Session', activeSessions >= 3, activeSessions, 3, 'Start 3 sessions'),
+    badgeDefinition('sessions_10', 'Session Builder', 'Session', activeSessions >= 10, activeSessions, 10, 'Start 10 sessions'),
+    badgeDefinition('sessions_25', 'Session Veteran', 'Session', activeSessions >= 25, activeSessions, 25, 'Start 25 sessions'),
+    badgeDefinition('momentum_25', 'Momentum Spark', 'Session', momentum >= 25, momentum, 25, 'Reach 25 momentum'),
+    badgeDefinition('momentum_50', 'Momentum Builder', 'Session', momentum >= 50, momentum, 50, 'Reach 50 momentum'),
+    badgeDefinition('momentum_75', 'Momentum Machine', 'Session', momentum >= 75, momentum, 75, 'Reach 75 momentum'),
+    badgeDefinition('morning_10', 'Morning Learner', 'Time of Day', morningEvents >= 10, morningEvents, 10, 'Study in the morning often'),
+    badgeDefinition('evening_10', 'Evening Learner', 'Time of Day', eveningEvents >= 10, eveningEvents, 10, 'Study in the evening often'),
+    badgeDefinition('night_10', 'Night Owl Learner', 'Time of Day', lateNight >= 10, lateNight, 10, 'Study late-night often'),
+  ];
+}
+
 function computeGameProfile(metrics) {
+  const allBadges = buildBadges(metrics);
+  const unlockedBadges = allBadges.filter((badge) => badge.unlocked);
   const xp = Math.round(
     metrics.learningTime.trueActiveStudySeconds / 60 * 10
     + metrics.learningTime.studyStreakDays * 50
     + metrics.learningProgress.completedVideos * 100
-    + metrics.charts.insightCards.focusScore * 5,
+    + metrics.charts.insightCards.focusScore * 5
+    + unlockedBadges.length * 35
   );
   const level = Math.max(1, Math.floor(Math.sqrt(Math.max(0, xp)) / 3) + 1);
   const nextLevelXp = Math.pow(level * 3, 2);
-  const badges = [];
-
-  if (metrics.learningTime.studyStreakDays >= 3) badges.push({ key: 'streak_3', label: '3 Day Streak' });
-  if (metrics.learningTime.studyStreakDays >= 7) badges.push({ key: 'streak_7', label: 'Weekly Warrior' });
-  if (metrics.learningTime.trueActiveStudySeconds >= 60 * 60) badges.push({ key: 'hour_1', label: 'First Study Hour' });
-  if (metrics.learningProgress.completedVideos >= 1) badges.push({ key: 'first_complete', label: 'Video Finisher' });
-  if (metrics.charts.insightCards.focusScore >= 80) badges.push({ key: 'focused', label: 'Deep Focus' });
-  if (metrics.videoCompletion.some((video) => video.rewatchedSeconds >= 60)) badges.push({ key: 'rewatcher', label: 'Revision Master' });
+  const previousLevelXp = Math.pow(Math.max(0, level - 1) * 3, 2);
+  const role = level >= 25 ? 'Legend' : level >= 18 ? 'Master' : level >= 12 ? 'Expert' : level >= 7 ? 'Builder' : level >= 3 ? 'Explorer' : 'Starter';
+  const coins = Math.floor(xp / 12) + unlockedBadges.length * 10;
+  const achievements = [
+    { key: 'learning_time', label: 'Learning Time', percent: Math.min(100, Math.round((metrics.learningTime.trueActiveStudySeconds / (10 * 60 * 60)) * 100)) },
+    { key: 'consistency', label: 'Consistency Strategy', percent: metrics.charts.insightCards.consistencyScore },
+    { key: 'completion', label: 'Course Completion', percent: metrics.charts.insightCards.completionRate },
+    { key: 'focus', label: 'Focus Control', percent: metrics.charts.insightCards.focusScore },
+    { key: 'revision', label: 'Revision Power', percent: Math.min(100, Math.round(sum(metrics.videoCompletion, (video) => video.rewatchedSeconds) / 60)) },
+    { key: 'playlist', label: 'Playlist Progress', percent: metrics.playlistMetrics.length ? Math.round(sum(metrics.playlistMetrics, (playlist) => playlist.completionPercent) / metrics.playlistMetrics.length) : 0 },
+  ];
 
   return {
     xp,
     level,
+    role,
+    coins,
     nextLevelXp,
-    levelProgressPercent: Math.min(100, Math.round((xp / Math.max(1, nextLevelXp)) * 100)),
-    badges,
+    previousLevelXp,
+    levelProgressPercent: Math.min(100, Math.round(((xp - previousLevelXp) / Math.max(1, nextLevelXp - previousLevelXp)) * 100)),
+    badges: unlockedBadges,
+    allBadges,
+    lockedBadges: allBadges.filter((badge) => !badge.unlocked),
+    badgeCount: unlockedBadges.length,
+    totalBadgeCount: allBadges.length,
+    achievements,
+    strategy: {
+      consistencyScore: metrics.charts.insightCards.consistencyScore,
+      focusScore: metrics.charts.insightCards.focusScore,
+      completionRate: metrics.charts.insightCards.completionRate,
+      momentumScore: metrics.sessionQuality.studyMomentumScore,
+      nextBestActions: allBadges.filter((badge) => !badge.unlocked).sort((a, b) => b.percent - a.percent).slice(0, 5),
+    },
   };
 }
 
@@ -647,6 +770,10 @@ export async function getLearnerLeaderboard() {
       playlistProgressPercent: row.playlistProgressPercent,
       xp: row.game?.xp || 0,
       level: row.game?.level || 1,
+      role: row.game?.role || 'Starter',
+      coins: row.game?.coins || 0,
+      badgeCount: row.game?.badgeCount || row.game?.badges?.length || 0,
+      totalBadgeCount: row.game?.totalBadgeCount || row.game?.allBadges?.length || row.game?.badges?.length || 0,
       badges: row.game?.badges || [],
       rankScore: row.activeStudySeconds + row.consistencyScore * 60 + row.completionRatePercent * 30,
     })).sort((a, b) => b.rankScore - a.rankScore),
