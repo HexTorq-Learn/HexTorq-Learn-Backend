@@ -31,8 +31,8 @@ model User {
   id           String              @id @default(cuid())
   name         String
   email        String              @unique
-  username     String?             @unique
-  phone        String?             @unique
+  username     String?
+  phone        String?
   passwordHash String
   role         UserRole            @default(STUDENT)
   createdAt    DateTime            @default(now())
