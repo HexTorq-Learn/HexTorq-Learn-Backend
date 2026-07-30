@@ -13,6 +13,8 @@ adminRouter.use(requireAuth, requireAdmin);
 const createUserSchema = z.object({
   name: z.string().min(2),
   email: z.string().email(),
+  username: z.string().min(3).max(40).regex(/^[a-zA-Z0-9._-]+$/).optional().or(z.literal('')),
+  phone: z.string().min(7).max(20).regex(/^[0-9+\-\s()]+$/).optional().or(z.literal('')),
   password: z.string().min(6),
   role: z.enum(['ADMIN', 'STUDENT']).default('STUDENT'),
 });
@@ -20,6 +22,8 @@ const createUserSchema = z.object({
 const updateUserSchema = z.object({
   name: z.string().min(2).optional(),
   email: z.string().email().optional(),
+  username: z.string().min(3).max(40).regex(/^[a-zA-Z0-9._-]+$/).optional().or(z.literal('')),
+  phone: z.string().min(7).max(20).regex(/^[0-9+\-\s()]+$/).optional().or(z.literal('')),
   password: z.string().min(6).optional(),
   role: z.enum(['ADMIN', 'STUDENT']).optional(),
 });
@@ -28,6 +32,43 @@ const updateVideoSchema = z.object({
   title: z.string().min(1).optional(),
   durationSec: z.number().int().positive().nullable().optional(),
 });
+
+function normalizeUserBody(body) {
+  const normalized = {
+    ...body,
+    ...(body.name ? { name: body.name.trim() } : {}),
+    ...(body.email ? { email: body.email.trim().toLowerCase() } : {}),
+  };
+  if (Object.prototype.hasOwnProperty.call(body, 'username')) {
+    normalized.username = body.username?.trim() ? body.username.trim().toLowerCase() : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'phone')) {
+    normalized.phone = body.phone?.trim() ? body.phone.trim().replace(/\s+/g, '') : null;
+  }
+  return normalized;
+}
+
+async function findDuplicateUser({ email, username, phone }, excludeId) {
+  const checks = [];
+  if (email) checks.push({ email });
+  if (username) checks.push({ username });
+  if (phone) checks.push({ phone });
+  if (!checks.length) return null;
+
+  const user = await prisma.user.findFirst({
+    where: {
+      OR: checks,
+      ...(excludeId ? { NOT: { id: excludeId } } : {}),
+    },
+    select: { email: true, username: true, phone: true },
+  });
+
+  if (!user) return null;
+  if (email && user.email === email) return 'Email already exists';
+  if (username && user.username === username) return 'Username already exists';
+  if (phone && user.phone === phone) return 'Phone already exists';
+  return 'User already exists';
+}
 
 adminRouter.get('/summary', async (_req, res, next) => {
   try {
@@ -71,6 +112,8 @@ adminRouter.get('/users', async (_req, res, next) => {
         id: true,
         name: true,
         email: true,
+        username: true,
+        phone: true,
         role: true,
         createdAt: true,
         summaries: {
@@ -92,16 +135,23 @@ adminRouter.get('/users', async (_req, res, next) => {
 
 adminRouter.post('/users', async (req, res, next) => {
   try {
-    const body = createUserSchema.parse(req.body);
+    const body = normalizeUserBody(createUserSchema.parse(req.body));
+    const duplicateMessage = await findDuplicateUser(body);
+    if (duplicateMessage) {
+      return res.status(409).json({ message: duplicateMessage });
+    }
+
     const passwordHash = await bcrypt.hash(body.password, 12);
     const user = await prisma.user.create({
       data: {
         name: body.name,
-        email: body.email.toLowerCase(),
+        email: body.email,
+        username: body.username,
+        phone: body.phone,
         passwordHash,
         role: body.role,
       },
-      select: { id: true, name: true, email: true, role: true, createdAt: true },
+      select: { id: true, name: true, email: true, username: true, phone: true, role: true, createdAt: true },
     });
 
     res.status(201).json({ user });
@@ -115,15 +165,22 @@ adminRouter.post('/users', async (req, res, next) => {
 
 adminRouter.patch('/users/:id', async (req, res, next) => {
   try {
-    const body = updateUserSchema.parse(req.body);
+    const body = normalizeUserBody(updateUserSchema.parse(req.body));
 
     if (req.user.id === req.params.id && body.role && body.role !== 'ADMIN') {
       return res.status(400).json({ message: 'Cannot remove admin role from your own account' });
     }
 
+    const duplicateMessage = await findDuplicateUser(body, req.params.id);
+    if (duplicateMessage) {
+      return res.status(409).json({ message: duplicateMessage });
+    }
+
     const data = {
       ...(body.name ? { name: body.name } : {}),
-      ...(body.email ? { email: body.email.toLowerCase() } : {}),
+      ...(body.email ? { email: body.email } : {}),
+      ...(body.username !== undefined ? { username: body.username } : {}),
+      ...(body.phone !== undefined ? { phone: body.phone } : {}),
       ...(body.role ? { role: body.role } : {}),
     };
 
@@ -134,7 +191,7 @@ adminRouter.patch('/users/:id', async (req, res, next) => {
     const user = await prisma.user.update({
       where: { id: req.params.id },
       data,
-      select: { id: true, name: true, email: true, role: true, createdAt: true },
+      select: { id: true, name: true, email: true, username: true, phone: true, role: true, createdAt: true },
     });
 
     res.json({ user });
