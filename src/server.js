@@ -11,7 +11,8 @@ import { analyticsRouter } from './routes/analytics.js';
 import { adminRouter } from './routes/admin.js';
 import { playlistsRouter } from './routes/playlists.js';
 import { initRealtime } from './realtime.js';
-import { corsOrigin } from './cors.js';
+import { corsOrigin, getAllowedOrigins } from './cors.js';
+import { ensureUserContactColumns } from './services/databaseEnsure.js';
 
 const PROJECT_NAME = 'HexTorq Learn Backend';
 const app = express();
@@ -19,7 +20,27 @@ const port = Number(process.env.PORT || 4000);
 const corsOptions = {
   origin: corsOrigin,
   credentials: true,
+  methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  optionsSuccessStatus: 204,
 };
+
+function forceCorsHeaders(req, res, next) {
+  const origin = req.get('origin');
+  if (origin && getAllowedOrigins().includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', req.get('access-control-request-headers') || 'Content-Type,Authorization');
+  }
+
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
+
+  return next();
+}
 
 function requestLogger(req, res, next) {
   const startedAt = process.hrtime.bigint();
@@ -48,6 +69,7 @@ function healthPayload() {
   };
 }
 
+app.use(forceCorsHeaders);
 app.use(helmet());
 app.use(requestLogger);
 app.options(/.*/, cors(corsOptions));
@@ -94,6 +116,13 @@ app.use((error, _req, res, _next) => {
 const server = createServer(app);
 initRealtime(server);
 
-server.listen(port, () => {
-  console.log(`HexTorq Learn backend listening on http://localhost:${port}`);
-});
+ensureUserContactColumns()
+  .then(() => {
+    server.listen(port, () => {
+      console.log(`HexTorq Learn backend listening on http://localhost:${port}`);
+    });
+  })
+  .catch((error) => {
+    console.error('Failed to prepare database columns before startup', error);
+    process.exit(1);
+  });
