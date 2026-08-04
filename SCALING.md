@@ -37,10 +37,57 @@ Run this during low traffic after a database backup. The script keeps the old ta
 
 PgBouncer is external infrastructure, not Node code. The app uses the same Prisma client; point `DATABASE_URL` at PgBouncer instead of Postgres.
 
+Install on Ubuntu/Debian:
+
+```bash
+sudo apt update
+sudo apt install -y pgbouncer
+```
+
+Copy the repo templates:
+
+```bash
+sudo cp scripts/pgbouncer.ini.example /etc/pgbouncer/pgbouncer.ini
+sudo cp scripts/pgbouncer-userlist.example.txt /etc/pgbouncer/userlist.txt
+sudo nano /etc/pgbouncer/pgbouncer.ini
+sudo nano /etc/pgbouncer/userlist.txt
+```
+
+Generate the PgBouncer md5 password entry:
+
+```bash
+python3 - <<'PY'
+import hashlib
+user = "user_hextorq_learn"
+password = "YOUR_POSTGRES_PASSWORD"
+print('"{}" "md5{}"'.format(user, hashlib.md5((password + user).encode()).hexdigest()))
+PY
+```
+
+Restart PgBouncer:
+
+```bash
+sudo systemctl enable pgbouncer
+sudo systemctl restart pgbouncer
+sudo systemctl status pgbouncer --no-pager
+```
+
 Example:
 
 ```env
 DATABASE_URL="postgresql://USER:PASSWORD@127.0.0.1:6432/db_hextorq_learn?pgbouncer=true&connection_limit=5"
+```
+
+For this project, app runtime should use PgBouncer:
+
+```env
+DATABASE_URL="postgresql://user_hextorq_learn:PASSWORD@127.0.0.1:6432/db_hextorq_learn?pgbouncer=true&connection_limit=5"
+```
+
+Keep a direct maintenance URL for manual SQL and Prisma maintenance:
+
+```env
+DIRECT_DATABASE_URL="postgresql://user_hextorq_learn:PASSWORD@127.0.0.1:5432/db_hextorq_learn"
 ```
 
 Recommended topology:
