@@ -541,6 +541,47 @@ function computeGameProfile(metrics) {
   };
 }
 
+function computeLightGameProfile({ activeStudySeconds, consistencyScore, completedVideos, completionRatePercent, focusScore, rewatchedSeconds }) {
+  const xp = Math.round(
+    activeStudySeconds / 60 * 10
+    + consistencyScore * 50
+    + completedVideos * 100
+    + focusScore * 5
+  );
+  const level = Math.max(1, Math.floor(Math.sqrt(Math.max(0, xp)) / 3) + 1);
+  const nextLevelXp = Math.pow(level * 3, 2);
+  const previousLevelXp = Math.pow(Math.max(0, level - 1) * 3, 2);
+  const role = level >= 25 ? 'Legend' : level >= 18 ? 'Master' : level >= 12 ? 'Expert' : level >= 7 ? 'Builder' : level >= 3 ? 'Explorer' : 'Starter';
+  const allBadges = [
+    badgeDefinition('first_minute', 'First Minute', 'Time', activeStudySeconds >= 60, activeStudySeconds / 60, 1, 'Study for 1 active minute'),
+    badgeDefinition('study_15m', 'Quarter Focus', 'Time', activeStudySeconds >= 15 * 60, activeStudySeconds / 60, 15, 'Study for 15 active minutes'),
+    badgeDefinition('study_30m', 'Deep Start', 'Time', activeStudySeconds >= 30 * 60, activeStudySeconds / 60, 30, 'Study for 30 active minutes'),
+    badgeDefinition('hour_1', 'First Study Hour', 'Time', activeStudySeconds >= 60 * 60, activeStudySeconds / 60, 60, 'Study for 1 active hour'),
+    badgeDefinition('streak_1', 'Day One Streak', 'Streak', consistencyScore >= 1, consistencyScore, 1, 'Study for 1 day'),
+    badgeDefinition('streak_3', '3 Day Streak', 'Streak', consistencyScore >= 3, consistencyScore, 3, 'Study 3 days in a row'),
+    badgeDefinition('complete_1', 'Video Finisher', 'Completion', completedVideos >= 1, completedVideos, 1, 'Complete 1 video'),
+    badgeDefinition('completion_50', '50% Course Mark', 'Completion', completionRatePercent >= 50, completionRatePercent, 50, 'Reach 50% average completion'),
+    badgeDefinition('focus_75', 'Deep Focus', 'Focus', focusScore >= 75, focusScore, 75, 'Reach 75 focus score'),
+    badgeDefinition('revision_15m', 'Revision Builder', 'Revision', rewatchedSeconds >= 15 * 60, rewatchedSeconds / 60, 15, 'Rewatch 15 minutes'),
+  ];
+  const badges = allBadges.filter((badge) => badge.unlocked);
+
+  return {
+    xp,
+    level,
+    role,
+    coins: Math.floor(xp / 12) + badges.length * 10,
+    nextLevelXp,
+    previousLevelXp,
+    levelProgressPercent: Math.min(100, Math.round(((xp - previousLevelXp) / Math.max(1, nextLevelXp - previousLevelXp)) * 100)),
+    badges,
+    allBadges,
+    lockedBadges: allBadges.filter((badge) => !badge.unlocked),
+    badgeCount: badges.length,
+    totalBadgeCount: allBadges.length,
+  };
+}
+
 function computeAlerts(events, summaries, videoMetrics, playlistMetrics) {
   const latestEvent = [...events].sort((a, b) => b.serverTs - a.serverTs)[0];
   const daysSinceActive = latestEvent ? Math.floor((Date.now() - latestEvent.serverTs.getTime()) / DAY_MS) : null;
@@ -674,43 +715,117 @@ export async function getAdvancedUserMetrics(userId) {
 }
 
 export async function getAdminComparisonMetrics() {
-  const users = await prisma.user.findMany({
-    select: { id: true, name: true, email: true, role: true },
-    orderBy: { createdAt: 'desc' },
-  });
+  const eventWindowStart = new Date(Date.now() - 30 * DAY_MS);
+  const [users, videos, summaries, recentEvents, heatmapGroups, stuckGroups, playlistRows] = await Promise.all([
+    prisma.user.findMany({
+      select: { id: true, name: true, email: true, role: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.video.findMany({ select: { id: true, playlistId: true, durationSec: true } }),
+    prisma.dailyWatchSummary.findMany({
+      select: { userId: true, videoId: true, date: true, activeWatchSeconds: true, pauseCount: true, seekCount: true, sessionCount: true },
+      orderBy: { date: 'asc' },
+    }),
+    prisma.watchEvent.findMany({
+      where: { serverTs: { gte: eventWindowStart } },
+      select: { userId: true, eventType: true, serverTs: true },
+      orderBy: { serverTs: 'desc' },
+      take: 30000,
+    }),
+    prisma.videoSecondHeatmap.groupBy({
+      by: ['userId', 'videoId'],
+      where: { watchCount: { gt: 0 } },
+      _count: { second: true },
+      _sum: { watchCount: true },
+    }),
+    prisma.videoSecondHeatmap.groupBy({
+      by: ['userId'],
+      where: { watchCount: { gte: 5 } },
+      _count: { id: true },
+    }),
+    prisma.playlist.findMany({ include: { videos: true } }),
+  ]);
 
-  const rows = [];
-  for (const user of users) {
-    const metrics = await getAdvancedUserMetrics(user.id);
-    if (!metrics) continue;
-    const completionAvg = metrics.videoCompletion.length
-      ? Math.round(sum(metrics.videoCompletion, (video) => video.percentWatched) / metrics.videoCompletion.length)
+  const videosById = Object.fromEntries(videos.map((video) => [video.id, video]));
+  const summariesByUser = groupBy(summaries, (row) => row.userId);
+  const eventsByUser = groupBy(recentEvents, (event) => event.userId);
+  const heatmapByUser = groupBy(heatmapGroups, (row) => row.userId);
+  const stuckByUser = Object.fromEntries(stuckGroups.map((row) => [row.userId, row._count.id]));
+
+  const rows = users.map((user) => {
+    const userSummaries = summariesByUser[user.id] || [];
+    const userEvents = eventsByUser[user.id] || [];
+    const userHeatmap = heatmapByUser[user.id] || [];
+    const activeStudySeconds = sum(userSummaries, (row) => row.activeWatchSeconds);
+    const studiedDays = userSummaries
+      .filter((row) => row.activeWatchSeconds > 0)
+      .map((row) => formatDateKey(row.date));
+    const consistencyScore = longestStreak(studiedDays);
+    const dailySeries = buildStudySeries(userSummaries, 'day');
+    const hourlyDistribution = Array.from({ length: 24 }, (_, hour) => ({ hour, events: 0, activeWatchSeconds: 0 }));
+
+    for (const event of userEvents) {
+      hourlyDistribution[formatClockParts(event.serverTs).hour].events += 1;
+    }
+
+    const progressRows = userHeatmap.map((row) => {
+      const duration = Number(videosById[row.videoId]?.durationSec || 0) || Math.max(1, row._count.second);
+      const percentWatched = Math.min(100, Math.round((row._count.second / duration) * 100));
+      return {
+        videoId: row.videoId,
+        playlistId: videosById[row.videoId]?.playlistId || 'none',
+        percentWatched,
+        rewatchedSeconds: Math.max(0, Number(row._sum.watchCount || 0) - row._count.second),
+      };
+    });
+    const completionRatePercent = videos.length
+      ? Math.round(sum(progressRows, (row) => row.percentWatched) / videos.length)
       : 0;
-    rows.push({
+    const completedVideos = progressRows.filter((row) => row.percentWatched >= 90).length;
+    const playlistProgress = playlistRows.map((playlist) => {
+      const playlistVideoIds = new Set(playlist.videos.map((video) => video.id));
+      const playlistProgressRows = progressRows.filter((row) => playlistVideoIds.has(row.videoId));
+      const completed = playlistProgressRows.filter((row) => row.percentWatched >= 90).length;
+      return playlist.videos.length ? Math.round((completed / playlist.videos.length) * 100) : 0;
+    });
+    const playlistProgressPercent = playlistProgress.length
+      ? Math.round(sum(playlistProgress, (value) => value) / playlistProgress.length)
+      : 0;
+    const distractionRate = userEvents.filter((event) => ['TAB_HIDDEN', 'WINDOW_BLUR'].includes(event.eventType)).length;
+    const idleEvents = userEvents.filter((event) => event.eventType === 'IDLE_START').length;
+    const rewatchedSeconds = sum(progressRows, (row) => row.rewatchedSeconds);
+    const focusScore = Math.max(0, Math.min(100, activeStudySeconds ? 100 - distractionRate * 2 - idleEvents * 5 : 0));
+
+    return {
       user,
       publicLearnerId: publicLearnerId(user.id),
-      activeStudySeconds: metrics.learningTime.trueActiveStudySeconds,
-      consistencyScore: metrics.learningTime.studyStreakDays,
-      playlistProgressPercent: metrics.playlistMetrics.length
-        ? Math.round(sum(metrics.playlistMetrics, (playlist) => playlist.completionPercent) / metrics.playlistMetrics.length)
-        : 0,
-      completionRatePercent: completionAvg,
-      distractionRate: metrics.sessionQuality.distractionCount,
-      lowCompletion: completionAvg < 50,
-      highDistraction: metrics.sessionQuality.distractionCount >= 5,
-      stuckSegments: sum(metrics.rewatchDifficulty, (video) => video.repeated5xRanges.length),
-      dailySeries: metrics.learningTime.dailySeries,
-      hourlyDistribution: metrics.timeOfDay.hourlyDistribution,
+      activeStudySeconds,
+      consistencyScore,
+      playlistProgressPercent,
+      completionRatePercent,
+      distractionRate,
+      lowCompletion: completionRatePercent < 50,
+      highDistraction: distractionRate >= 5,
+      stuckSegments: stuckByUser[user.id] || 0,
+      dailySeries,
+      hourlyDistribution,
       radar: {
-        focus: metrics.charts.insightCards.focusScore,
-        completion: completionAvg,
-        consistency: Math.min(100, metrics.consistencyScore || metrics.learningTime.studyStreakDays * 10),
-        rewatch: Math.min(100, sum(metrics.videoCompletion, (video) => video.rewatchedSeconds) / 10),
-        idle: Math.max(0, 100 - Math.min(100, metrics.learningTime.idleSeconds / 60)),
+        focus: focusScore,
+        completion: completionRatePercent,
+        consistency: Math.min(100, consistencyScore * 10),
+        rewatch: Math.min(100, Math.round(rewatchedSeconds / 10)),
+        idle: Math.max(0, 100 - idleEvents * 10),
       },
-      game: metrics.game,
-    });
-  }
+      game: computeLightGameProfile({
+        activeStudySeconds,
+        consistencyScore,
+        completedVideos,
+        completionRatePercent,
+        focusScore,
+        rewatchedSeconds,
+      }),
+    };
+  });
 
   const allHourly = Array.from({ length: 24 }, (_, hour) => ({
     hour,
@@ -724,10 +839,8 @@ export async function getAdminComparisonMetrics() {
       dailyActiveMap[day.key].totalStudySeconds += day.activeWatchSeconds;
     }
   }
-  const playlistRows = await prisma.playlist.findMany({ include: { videos: true } });
   const cohortMap = {};
-  const cohortUsers = await prisma.user.findMany({ select: { id: true, createdAt: true } });
-  for (const user of cohortUsers) {
+  for (const user of users) {
     const cohort = periodKey(user.createdAt, 'week');
     cohortMap[cohort] = cohortMap[cohort] || { cohort, users: 0, day1: 0, day2: 0, day7: 0 };
     cohortMap[cohort].users += 1;
