@@ -16,6 +16,7 @@ import { ensureAdvancedMetricsSnapshotTable, ensureUserContactColumns } from './
 import { ensureAnalyticsIndexes } from './services/databaseIndexes.js';
 import { startAdvancedMetricsCacheJob } from './services/advancedMetricsCache.js';
 import { startTrackingQueue, stopTrackingQueue } from './services/trackingQueue.js';
+import { startWatchEventPartitionJob } from './services/databasePartitions.js';
 
 const PROJECT_NAME = 'HexTorq Learn Backend';
 const app = express();
@@ -124,6 +125,7 @@ Promise.all([ensureUserContactColumns(), ensureAdvancedMetricsSnapshotTable(), e
     server.listen(port, () => {
       console.log(`HexTorq Learn backend listening on http://localhost:${port}`);
       startTrackingQueue();
+      startWatchEventPartitionJob();
       startAdvancedMetricsCacheJob();
     });
   })
