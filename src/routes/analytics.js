@@ -3,6 +3,7 @@ import { prisma } from '../prisma.js';
 import { requireAuth } from '../middleware/auth.js';
 import { getUserOverview, getUserTimeMap } from '../services/analytics.js';
 import { getAdvancedUserMetrics, getLearnerLeaderboard } from '../services/advancedMetrics.js';
+import { cachedResponse } from '../services/responseCache.js';
 
 export const analyticsRouter = express.Router();
 
@@ -10,7 +11,7 @@ analyticsRouter.use(requireAuth);
 
 analyticsRouter.get('/overview', async (req, res, next) => {
   try {
-    res.json(await getUserOverview(req.user.id));
+    res.json(await cachedResponse(`overview:${req.user.id}`, 5000, () => getUserOverview(req.user.id)));
   } catch (error) {
     next(error);
   }
@@ -18,7 +19,9 @@ analyticsRouter.get('/overview', async (req, res, next) => {
 
 analyticsRouter.get('/time-map', async (req, res, next) => {
   try {
-    res.json(await getUserTimeMap(req.user.id, req.query.date ? new Date(req.query.date) : new Date()));
+    const date = req.query.date ? new Date(req.query.date) : new Date();
+    const key = `time-map:${req.user.id}:${date.toISOString().slice(0, 10)}`;
+    res.json(await cachedResponse(key, 5000, () => getUserTimeMap(req.user.id, date)));
   } catch (error) {
     next(error);
   }
@@ -26,7 +29,7 @@ analyticsRouter.get('/time-map', async (req, res, next) => {
 
 analyticsRouter.get('/advanced', async (req, res, next) => {
   try {
-    res.json(await getAdvancedUserMetrics(req.user.id));
+    res.json(await cachedResponse(`advanced:${req.user.id}`, 15000, () => getAdvancedUserMetrics(req.user.id)));
   } catch (error) {
     next(error);
   }
@@ -34,7 +37,7 @@ analyticsRouter.get('/advanced', async (req, res, next) => {
 
 analyticsRouter.get('/leaderboard', async (_req, res, next) => {
   try {
-    res.json(await getLearnerLeaderboard());
+    res.json(await cachedResponse('leaderboard', 15000, () => getLearnerLeaderboard()));
   } catch (error) {
     next(error);
   }

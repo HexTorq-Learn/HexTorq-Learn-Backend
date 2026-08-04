@@ -99,14 +99,31 @@ export async function getUserOverview(userId) {
 export async function getUserTimeMap(userId, date = new Date()) {
   const dayStart = startOfUtcDay(date);
   const dayEnd = endOfUtcDay(date);
-  const events = await prisma.watchEvent.findMany({
-    where: {
-      userId,
-      serverTs: { gte: dayStart, lt: dayEnd },
-    },
-    orderBy: { serverTs: 'asc' },
-    include: { video: true },
-  });
+  const [buckets, recentEvents] = await Promise.all([
+    prisma.$queryRaw`
+      SELECT
+        EXTRACT(HOUR FROM "serverTs" AT TIME ZONE ${APP_TIME_ZONE})::int AS hour,
+        EXTRACT(MINUTE FROM "serverTs" AT TIME ZONE ${APP_TIME_ZONE})::int AS minute,
+        COUNT(*)::int AS "activeEvents",
+        SUM(CASE WHEN "eventType" = 'PLAY' THEN 1 ELSE 0 END)::int AS "playEvents",
+        SUM(CASE WHEN "eventType" = 'PAUSE' THEN 1 ELSE 0 END)::int AS "pauseEvents",
+        SUM(CASE WHEN "eventType" = 'SEEK' THEN 1 ELSE 0 END)::int AS "seekEvents"
+      FROM "WatchEvent"
+      WHERE "userId" = ${userId}
+        AND "serverTs" >= ${dayStart}
+        AND "serverTs" < ${dayEnd}
+      GROUP BY hour, minute
+    `,
+    prisma.watchEvent.findMany({
+      where: {
+        userId,
+        serverTs: { gte: dayStart, lt: dayEnd },
+      },
+      orderBy: { serverTs: 'desc' },
+      take: 120,
+      include: { video: true },
+    }),
+  ]);
 
   const hours = Array.from({ length: 24 }, (_, hour) => ({
     hour,
@@ -117,17 +134,19 @@ export async function getUserTimeMap(userId, date = new Date()) {
     seconds: Array.from({ length: 60 }, (_, minute) => ({ minute, count: 0 })),
   }));
 
-  for (const event of events) {
-    const parts = formatClockParts(event.serverTs);
-    const bucket = hours[parts.hour];
-    bucket.activeEvents += 1;
-    bucket.seconds[parts.minute].count += 1;
-    if (event.eventType === 'PLAY') bucket.playEvents += 1;
-    if (event.eventType === 'PAUSE') bucket.pauseEvents += 1;
-    if (event.eventType === 'SEEK') bucket.seekEvents += 1;
+  for (const row of buckets) {
+    const hour = Number(row.hour);
+    const minute = Number(row.minute);
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) continue;
+    const bucket = hours[hour];
+    bucket.activeEvents += Number(row.activeEvents || 0);
+    bucket.playEvents += Number(row.playEvents || 0);
+    bucket.pauseEvents += Number(row.pauseEvents || 0);
+    bucket.seekEvents += Number(row.seekEvents || 0);
+    bucket.seconds[minute].count += Number(row.activeEvents || 0);
   }
 
-  const timeline = events.slice(-120).map((event) => ({
+  const timeline = recentEvents.reverse().map((event) => ({
     id: event.id,
     type: event.eventType,
     clock: formatClockParts(event.serverTs).clock,

@@ -6,6 +6,7 @@ import { prisma } from '../prisma.js';
 import { requireAuth } from '../middleware/auth.js';
 import { emitUserMetrics } from '../realtime.js';
 import { getUserOverview, getUserTimeMap, startOfUtcDay } from '../services/analytics.js';
+import { clearCachePrefix } from '../services/responseCache.js';
 
 export const trackingRouter = express.Router();
 
@@ -37,6 +38,8 @@ const watchEventTypes = new Set([
   'IDLE_END',
   'FLUSH',
 ]);
+const realtimeEmitState = new Map();
+const REALTIME_RECOMPUTE_MS = 10000;
 
 const ingestSchema = z.object({
   videoId: z.string().min(1),
@@ -75,6 +78,14 @@ function normalizeHeatmapTicks(ticks) {
       count: Math.floor(Number(count)),
     }))
     .filter((entry) => Number.isInteger(entry.second) && entry.second >= 0 && entry.count > 0);
+}
+
+function shouldRecomputeRealtime(userId) {
+  const last = realtimeEmitState.get(userId) || 0;
+  const current = Date.now();
+  if (current - last < REALTIME_RECOMPUTE_MS) return false;
+  realtimeEmitState.set(userId, current);
+  return true;
 }
 
 async function bulkUpsertHeatmapTicks(userId, videoId, heatmapEntries) {
@@ -212,14 +223,21 @@ trackingRouter.post('/ingest', async (req, res, next) => {
       activeWatchSeconds,
     };
 
+    clearCachePrefix(`overview:${req.user.id}`);
+    clearCachePrefix(`time-map:${req.user.id}`);
+    clearCachePrefix(`advanced:${req.user.id}`);
+    clearCachePrefix('leaderboard');
+
     res.json(result);
 
-    Promise.all([
-      getUserOverview(req.user.id),
-      getUserTimeMap(req.user.id),
-    ])
-      .then(([overview, timeMap]) => emitUserMetrics(req.user.id, { overview, timeMap }))
-      .catch((error) => console.error('Failed to emit realtime metrics', error));
+    if (shouldRecomputeRealtime(req.user.id)) {
+      Promise.all([
+        getUserOverview(req.user.id),
+        getUserTimeMap(req.user.id),
+      ])
+        .then(([overview, timeMap]) => emitUserMetrics(req.user.id, { overview, timeMap }))
+        .catch((error) => console.error('Failed to emit realtime metrics', error));
+    }
   } catch (error) {
     next(error);
   }

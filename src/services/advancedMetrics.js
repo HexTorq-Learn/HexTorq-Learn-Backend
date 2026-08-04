@@ -607,18 +607,53 @@ function computeAlerts(events, summaries, videoMetrics, playlistMetrics) {
 }
 
 export async function getAdvancedUserMetrics(userId) {
+  const eventWindowStart = new Date(Date.now() - 90 * DAY_MS);
   const [user, videos, sessions, events, heatmap, summaries, playlists] = await Promise.all([
     prisma.user.findUnique({ where: { id: userId }, select: { id: true, name: true, email: true, role: true, createdAt: true } }),
     prisma.video.findMany({ include: { playlist: true } }),
-    prisma.watchSession.findMany({ where: { userId }, orderBy: { loginAt: 'asc' } }),
-    prisma.watchEvent.findMany({ where: { userId }, orderBy: { serverTs: 'asc' }, include: { video: { include: { playlist: true } } } }),
-    prisma.videoSecondHeatmap.findMany({ where: { userId }, orderBy: [{ videoId: 'asc' }, { second: 'asc' }] }),
-    prisma.dailyWatchSummary.findMany({ where: { userId }, orderBy: { date: 'asc' }, include: { video: { include: { playlist: true } } } }),
+    prisma.watchSession.findMany({
+      where: { userId },
+      orderBy: { loginAt: 'desc' },
+      take: 500,
+    }),
+    prisma.watchEvent.findMany({
+      where: { userId, serverTs: { gte: eventWindowStart } },
+      orderBy: { serverTs: 'desc' },
+      take: 1500,
+      select: {
+        eventType: true,
+        videoId: true,
+        videoTimeSec: true,
+        fromTimeSec: true,
+        toTimeSec: true,
+        clientTs: true,
+        serverTs: true,
+      },
+    }),
+    prisma.videoSecondHeatmap.findMany({
+      where: { userId },
+      orderBy: [{ videoId: 'asc' }, { second: 'asc' }],
+      select: { videoId: true, second: true, watchCount: true },
+    }),
+    prisma.dailyWatchSummary.findMany({
+      where: { userId },
+      orderBy: { date: 'asc' },
+      select: {
+        videoId: true,
+        date: true,
+        activeWatchSeconds: true,
+        pauseCount: true,
+        seekCount: true,
+        sessionCount: true,
+      },
+    }),
     prisma.playlist.findMany({ orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }] }),
   ]);
 
   if (!user) return null;
 
+  sessions.reverse();
+  events.reverse();
   const heatmapByVideo = groupBy(heatmap, (row) => row.videoId);
   const eventsByVideo = groupBy(events, (event) => event.videoId);
   const summariesByVideo = groupBy(summaries, (row) => row.videoId);
