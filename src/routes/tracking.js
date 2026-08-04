@@ -1,4 +1,6 @@
 import express from 'express';
+import { Prisma } from '@prisma/client';
+import { randomUUID } from 'crypto';
 import { z } from 'zod';
 import { prisma } from '../prisma.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -75,6 +77,24 @@ function normalizeHeatmapTicks(ticks) {
     .filter((entry) => Number.isInteger(entry.second) && entry.second >= 0 && entry.count > 0);
 }
 
+async function bulkUpsertHeatmapTicks(userId, videoId, heatmapEntries) {
+  if (!heatmapEntries.length) return;
+
+  const chunkSize = 500;
+  for (let index = 0; index < heatmapEntries.length; index += chunkSize) {
+    const chunk = heatmapEntries.slice(index, index + chunkSize);
+    const values = Prisma.join(chunk.map((entry) => Prisma.sql`(${randomUUID()}, ${userId}, ${videoId}, ${entry.second}, ${entry.count}, NOW())`));
+    await prisma.$executeRaw`
+      INSERT INTO "VideoSecondHeatmap" ("id", "userId", "videoId", "second", "watchCount", "updatedAt")
+      VALUES ${values}
+      ON CONFLICT ("userId", "videoId", "second")
+      DO UPDATE SET
+        "watchCount" = "VideoSecondHeatmap"."watchCount" + EXCLUDED."watchCount",
+        "updatedAt" = NOW()
+    `;
+  }
+}
+
 trackingRouter.use(requireAuth);
 
 trackingRouter.post('/sessions', async (req, res, next) => {
@@ -143,67 +163,48 @@ trackingRouter.post('/ingest', async (req, res, next) => {
     const pauseCount = events.filter((event) => event.eventType === 'PAUSE').length;
     const seekCount = events.filter((event) => event.eventType === 'SEEK').length;
 
-    await prisma.$transaction(async (tx) => {
-      if (events.length > 0) {
-        await tx.watchEvent.createMany({
-          data: events.map((event) => ({
-            userId: req.user.id,
-            videoId: body.videoId,
-            sessionId: body.sessionId,
-            eventType: event.eventType,
-            videoTimeSec: event.videoTimeSec,
-            fromTimeSec: event.fromTimeSec,
-            toTimeSec: event.toTimeSec,
-            clientTs: event.clientTs,
-            metadata: event.metadata,
-          })),
-        });
-      }
+    if (events.length > 0) {
+      await prisma.watchEvent.createMany({
+        data: events.map((event) => ({
+          userId: req.user.id,
+          videoId: body.videoId,
+          sessionId: body.sessionId,
+          eventType: event.eventType,
+          videoTimeSec: event.videoTimeSec,
+          fromTimeSec: event.fromTimeSec,
+          toTimeSec: event.toTimeSec,
+          clientTs: event.clientTs,
+          metadata: event.metadata,
+        })),
+      });
+    }
 
-      for (const entry of heatmapEntries) {
-        await tx.videoSecondHeatmap.upsert({
-          where: {
-            userId_videoId_second: {
-              userId: req.user.id,
-              videoId: body.videoId,
-              second: entry.second,
-            },
-          },
-          update: { watchCount: { increment: entry.count } },
-          create: {
-            userId: req.user.id,
-            videoId: body.videoId,
-            second: entry.second,
-            watchCount: entry.count,
-          },
-        });
-      }
+    await bulkUpsertHeatmapTicks(req.user.id, body.videoId, heatmapEntries);
 
-      if (activeWatchSeconds || pauseCount || seekCount) {
-        await tx.dailyWatchSummary.upsert({
-          where: {
-            userId_videoId_date: {
-              userId: req.user.id,
-              videoId: body.videoId,
-              date: day,
-            },
-          },
-          update: {
-            activeWatchSeconds: { increment: activeWatchSeconds },
-            pauseCount: { increment: pauseCount },
-            seekCount: { increment: seekCount },
-          },
-          create: {
+    if (activeWatchSeconds || pauseCount || seekCount) {
+      await prisma.dailyWatchSummary.upsert({
+        where: {
+          userId_videoId_date: {
             userId: req.user.id,
             videoId: body.videoId,
             date: day,
-            activeWatchSeconds,
-            pauseCount,
-            seekCount,
           },
-        });
-      }
-    });
+        },
+        update: {
+          activeWatchSeconds: { increment: activeWatchSeconds },
+          pauseCount: { increment: pauseCount },
+          seekCount: { increment: seekCount },
+        },
+        create: {
+          userId: req.user.id,
+          videoId: body.videoId,
+          date: day,
+          activeWatchSeconds,
+          pauseCount,
+          seekCount,
+        },
+      });
+    }
 
     const result = {
       acceptedEvents: events.length,
