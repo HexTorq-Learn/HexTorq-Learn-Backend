@@ -1,12 +1,9 @@
 import express from 'express';
-import { Prisma } from '@prisma/client';
-import { randomUUID } from 'crypto';
 import { z } from 'zod';
 import { prisma } from '../prisma.js';
 import { requireAuth } from '../middleware/auth.js';
-import { emitUserMetrics } from '../realtime.js';
-import { getUserOverview, getUserTimeMap, startOfUtcDay } from '../services/analytics.js';
-import { clearCachePrefix } from '../services/responseCache.js';
+import { startOfUtcDay } from '../services/analytics.js';
+import { enqueueTrackingBatch } from '../services/trackingQueue.js';
 
 export const trackingRouter = express.Router();
 
@@ -38,9 +35,6 @@ const watchEventTypes = new Set([
   'IDLE_END',
   'FLUSH',
 ]);
-const realtimeEmitState = new Map();
-const REALTIME_RECOMPUTE_MS = 10000;
-
 const ingestSchema = z.object({
   videoId: z.string().min(1),
   sessionId: optionalString,
@@ -78,32 +72,6 @@ function normalizeHeatmapTicks(ticks) {
       count: Math.floor(Number(count)),
     }))
     .filter((entry) => Number.isInteger(entry.second) && entry.second >= 0 && entry.count > 0);
-}
-
-function shouldRecomputeRealtime(userId) {
-  const last = realtimeEmitState.get(userId) || 0;
-  const current = Date.now();
-  if (current - last < REALTIME_RECOMPUTE_MS) return false;
-  realtimeEmitState.set(userId, current);
-  return true;
-}
-
-async function bulkUpsertHeatmapTicks(userId, videoId, heatmapEntries) {
-  if (!heatmapEntries.length) return;
-
-  const chunkSize = 500;
-  for (let index = 0; index < heatmapEntries.length; index += chunkSize) {
-    const chunk = heatmapEntries.slice(index, index + chunkSize);
-    const values = Prisma.join(chunk.map((entry) => Prisma.sql`(${randomUUID()}, ${userId}, ${videoId}, ${entry.second}, ${entry.count}, NOW())`));
-    await prisma.$executeRaw`
-      INSERT INTO "VideoSecondHeatmap" ("id", "userId", "videoId", "second", "watchCount", "updatedAt")
-      VALUES ${values}
-      ON CONFLICT ("userId", "videoId", "second")
-      DO UPDATE SET
-        "watchCount" = "VideoSecondHeatmap"."watchCount" + EXCLUDED."watchCount",
-        "updatedAt" = NOW()
-    `;
-  }
 }
 
 trackingRouter.use(requireAuth);
@@ -174,69 +142,23 @@ trackingRouter.post('/ingest', async (req, res, next) => {
     const pauseCount = events.filter((event) => event.eventType === 'PAUSE').length;
     const seekCount = events.filter((event) => event.eventType === 'SEEK').length;
 
-    if (events.length > 0) {
-      await prisma.watchEvent.createMany({
-        data: events.map((event) => ({
-          userId: req.user.id,
-          videoId: body.videoId,
-          sessionId: body.sessionId,
-          eventType: event.eventType,
-          videoTimeSec: event.videoTimeSec,
-          fromTimeSec: event.fromTimeSec,
-          toTimeSec: event.toTimeSec,
-          clientTs: event.clientTs,
-          metadata: event.metadata,
-        })),
-      });
-    }
-
-    await bulkUpsertHeatmapTicks(req.user.id, body.videoId, heatmapEntries);
-
-    if (activeWatchSeconds || pauseCount || seekCount) {
-      await prisma.dailyWatchSummary.upsert({
-        where: {
-          userId_videoId_date: {
-            userId: req.user.id,
-            videoId: body.videoId,
-            date: day,
-          },
-        },
-        update: {
-          activeWatchSeconds: { increment: activeWatchSeconds },
-          pauseCount: { increment: pauseCount },
-          seekCount: { increment: seekCount },
-        },
-        create: {
-          userId: req.user.id,
-          videoId: body.videoId,
-          date: day,
-          activeWatchSeconds,
-          pauseCount,
-          seekCount,
-        },
-      });
-    }
+    const queued = enqueueTrackingBatch({
+      userId: req.user.id,
+      videoId: body.videoId,
+      sessionId: body.sessionId,
+      day,
+      events,
+      heatmapEntries,
+    });
 
     const result = {
       acceptedEvents: events.length,
       acceptedHeatmapTicks: heatmapEntries.length,
       activeWatchSeconds,
+      ...queued,
     };
 
-    clearCachePrefix(`overview:${req.user.id}`);
-    clearCachePrefix(`time-map:${req.user.id}`);
-    clearCachePrefix('leaderboard');
-
     res.json(result);
-
-    if (shouldRecomputeRealtime(req.user.id)) {
-      Promise.all([
-        getUserOverview(req.user.id),
-        getUserTimeMap(req.user.id),
-      ])
-        .then(([overview, timeMap]) => emitUserMetrics(req.user.id, { overview, timeMap }))
-        .catch((error) => console.error('Failed to emit realtime metrics', error));
-    }
   } catch (error) {
     next(error);
   }

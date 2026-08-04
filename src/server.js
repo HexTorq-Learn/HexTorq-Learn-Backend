@@ -15,6 +15,7 @@ import { corsOrigin, getAllowedOrigins } from './cors.js';
 import { ensureAdvancedMetricsSnapshotTable, ensureUserContactColumns } from './services/databaseEnsure.js';
 import { ensureAnalyticsIndexes } from './services/databaseIndexes.js';
 import { startAdvancedMetricsCacheJob } from './services/advancedMetricsCache.js';
+import { startTrackingQueue, stopTrackingQueue } from './services/trackingQueue.js';
 
 const PROJECT_NAME = 'HexTorq Learn Backend';
 const app = express();
@@ -122,6 +123,7 @@ Promise.all([ensureUserContactColumns(), ensureAdvancedMetricsSnapshotTable(), e
   .then(() => {
     server.listen(port, () => {
       console.log(`HexTorq Learn backend listening on http://localhost:${port}`);
+      startTrackingQueue();
       startAdvancedMetricsCacheJob();
     });
   })
@@ -129,3 +131,18 @@ Promise.all([ensureUserContactColumns(), ensureAdvancedMetricsSnapshotTable(), e
     console.error('Failed to prepare database before startup', error);
     process.exit(1);
   });
+
+async function shutdown(signal) {
+  console.log(`Received ${signal}, flushing tracking queue before shutdown`);
+  try {
+    await stopTrackingQueue();
+  } catch (error) {
+    console.error('Failed to flush tracking queue during shutdown', error);
+  } finally {
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 5000).unref();
+  }
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
