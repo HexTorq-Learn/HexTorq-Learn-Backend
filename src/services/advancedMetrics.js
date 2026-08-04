@@ -2,6 +2,7 @@ import { prisma } from '../prisma.js';
 import { formatClockParts, formatDateKey, startOfUtcDay } from './analytics.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const APP_TIME_ZONE = process.env.APP_TIME_ZONE || 'Asia/Kolkata';
 
 function secondsBetween(start, end = new Date()) {
   if (!start) return 0;
@@ -716,7 +717,7 @@ export async function getAdvancedUserMetrics(userId) {
 
 export async function getAdminComparisonMetrics() {
   const eventWindowStart = new Date(Date.now() - 30 * DAY_MS);
-  const [users, videos, summaries, recentEvents, heatmapGroups, stuckGroups, playlistRows] = await Promise.all([
+  const [users, videos, summaries, eventHourRows, heatmapGroups, stuckGroups, playlistRows] = await Promise.all([
     prisma.user.findMany({
       select: { id: true, name: true, email: true, role: true, createdAt: true },
       orderBy: { createdAt: 'desc' },
@@ -726,12 +727,17 @@ export async function getAdminComparisonMetrics() {
       select: { userId: true, videoId: true, date: true, activeWatchSeconds: true, pauseCount: true, seekCount: true, sessionCount: true },
       orderBy: { date: 'asc' },
     }),
-    prisma.watchEvent.findMany({
-      where: { serverTs: { gte: eventWindowStart } },
-      select: { userId: true, eventType: true, serverTs: true },
-      orderBy: { serverTs: 'desc' },
-      take: 30000,
-    }),
+    prisma.$queryRaw`
+      SELECT
+        "userId",
+        EXTRACT(HOUR FROM "serverTs" AT TIME ZONE ${APP_TIME_ZONE})::int AS hour,
+        COUNT(*)::int AS events,
+        SUM(CASE WHEN "eventType" IN ('TAB_HIDDEN', 'WINDOW_BLUR') THEN 1 ELSE 0 END)::int AS "distractionCount",
+        SUM(CASE WHEN "eventType" = 'IDLE_START' THEN 1 ELSE 0 END)::int AS "idleCount"
+      FROM "WatchEvent"
+      WHERE "serverTs" >= ${eventWindowStart}
+      GROUP BY "userId", hour
+    `,
     prisma.videoSecondHeatmap.groupBy({
       by: ['userId', 'videoId'],
       where: { watchCount: { gt: 0 } },
@@ -748,13 +754,13 @@ export async function getAdminComparisonMetrics() {
 
   const videosById = Object.fromEntries(videos.map((video) => [video.id, video]));
   const summariesByUser = groupBy(summaries, (row) => row.userId);
-  const eventsByUser = groupBy(recentEvents, (event) => event.userId);
+  const eventHoursByUser = groupBy(eventHourRows, (row) => row.userId);
   const heatmapByUser = groupBy(heatmapGroups, (row) => row.userId);
   const stuckByUser = Object.fromEntries(stuckGroups.map((row) => [row.userId, row._count.id]));
 
   const rows = users.map((user) => {
     const userSummaries = summariesByUser[user.id] || [];
-    const userEvents = eventsByUser[user.id] || [];
+    const userEventHours = eventHoursByUser[user.id] || [];
     const userHeatmap = heatmapByUser[user.id] || [];
     const activeStudySeconds = sum(userSummaries, (row) => row.activeWatchSeconds);
     const studiedDays = userSummaries
@@ -764,8 +770,11 @@ export async function getAdminComparisonMetrics() {
     const dailySeries = buildStudySeries(userSummaries, 'day');
     const hourlyDistribution = Array.from({ length: 24 }, (_, hour) => ({ hour, events: 0, activeWatchSeconds: 0 }));
 
-    for (const event of userEvents) {
-      hourlyDistribution[formatClockParts(event.serverTs).hour].events += 1;
+    for (const row of userEventHours) {
+      const hour = Number(row.hour);
+      if (hour >= 0 && hour < 24) {
+        hourlyDistribution[hour].events += Number(row.events || 0);
+      }
     }
 
     const progressRows = userHeatmap.map((row) => {
@@ -791,8 +800,8 @@ export async function getAdminComparisonMetrics() {
     const playlistProgressPercent = playlistProgress.length
       ? Math.round(sum(playlistProgress, (value) => value) / playlistProgress.length)
       : 0;
-    const distractionRate = userEvents.filter((event) => ['TAB_HIDDEN', 'WINDOW_BLUR'].includes(event.eventType)).length;
-    const idleEvents = userEvents.filter((event) => event.eventType === 'IDLE_START').length;
+    const distractionRate = sum(userEventHours, (row) => Number(row.distractionCount || 0));
+    const idleEvents = sum(userEventHours, (row) => Number(row.idleCount || 0));
     const rewatchedSeconds = sum(progressRows, (row) => row.rewatchedSeconds);
     const focusScore = Math.max(0, Math.min(100, activeStudySeconds ? 100 - distractionRate * 2 - idleEvents * 5 : 0));
 

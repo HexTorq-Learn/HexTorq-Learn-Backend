@@ -41,6 +41,8 @@ model User {
   events       WatchEvent[]
   heatmap      VideoSecondHeatmap[]
   summaries    DailyWatchSummary[]
+
+  @@index([createdAt])
 }
 
 model Playlist {
@@ -52,6 +54,8 @@ model Playlist {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   videos      Video[]
+
+  @@index([sortOrder, createdAt])
 }
 
 model Video {
@@ -68,6 +72,9 @@ model Video {
   events      WatchEvent[]
   heatmap     VideoSecondHeatmap[]
   summaries   DailyWatchSummary[]
+
+  @@index([createdAt])
+  @@index([playlistId])
 }
 
 model WatchSession {
@@ -81,6 +88,9 @@ model WatchSession {
   user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   video     Video?       @relation(fields: [videoId], references: [id], onDelete: SetNull)
   events    WatchEvent[]
+
+  @@index([userId, loginAt])
+  @@index([videoId, loginAt])
 }
 
 model WatchEvent {
@@ -100,6 +110,10 @@ model WatchEvent {
   session      WatchSession?  @relation(fields: [sessionId], references: [id], onDelete: SetNull)
 
   @@index([userId, videoId, serverTs])
+  @@index([serverTs])
+  @@index([userId, serverTs])
+  @@index([videoId, serverTs])
+  @@index([userId, eventType, serverTs])
   @@index([eventType])
 }
 
@@ -115,6 +129,9 @@ model VideoSecondHeatmap {
 
   @@unique([userId, videoId, second])
   @@index([videoId, second])
+  @@index([userId, videoId])
+  @@index([userId, watchCount])
+  @@index([watchCount])
 }
 
 model DailyWatchSummary {
@@ -132,4 +149,6 @@ model DailyWatchSummary {
 
   @@unique([userId, videoId, date])
   @@index([userId, date])
+  @@index([date])
+  @@index([videoId, date])
 }

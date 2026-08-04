@@ -14,16 +14,25 @@ const playlistSchema = z.object({
 
 playlistsRouter.use(requireAuth);
 
-playlistsRouter.get('/', async (_req, res, next) => {
+playlistsRouter.get('/', async (req, res, next) => {
   try {
+    const lite = req.query.lite === '1' || req.query.lite === 'true';
     const playlists = await prisma.playlist.findMany({
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
-      include: {
-        videos: {
-          orderBy: { createdAt: 'desc' },
-          include: { playlist: true },
-        },
-      },
+      ...(lite
+        ? {
+            include: {
+              _count: { select: { videos: true } },
+            },
+          }
+        : {
+            include: {
+              videos: {
+                orderBy: { createdAt: 'desc' },
+                include: { playlist: true },
+              },
+            },
+          }),
     });
 
     res.json({ playlists });

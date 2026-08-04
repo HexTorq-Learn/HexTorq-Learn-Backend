@@ -13,6 +13,7 @@ import { playlistsRouter } from './routes/playlists.js';
 import { initRealtime } from './realtime.js';
 import { corsOrigin, getAllowedOrigins } from './cors.js';
 import { ensureUserContactColumns } from './services/databaseEnsure.js';
+import { ensureAnalyticsIndexes } from './services/databaseIndexes.js';
 
 const PROJECT_NAME = 'HexTorq Learn Backend';
 const app = express();
@@ -116,13 +117,13 @@ app.use((error, _req, res, _next) => {
 const server = createServer(app);
 initRealtime(server);
 
-ensureUserContactColumns()
+Promise.all([ensureUserContactColumns(), ensureAnalyticsIndexes()])
   .then(() => {
     server.listen(port, () => {
       console.log(`HexTorq Learn backend listening on http://localhost:${port}`);
     });
   })
   .catch((error) => {
-    console.error('Failed to prepare database columns before startup', error);
+    console.error('Failed to prepare database before startup', error);
     process.exit(1);
   });

@@ -117,7 +117,7 @@ adminRouter.get('/users', async (_req, res, next) => {
         role: true,
         createdAt: true,
         summaries: {
-          include: { video: { include: { playlist: true } } },
+          select: { id: true, date: true, activeWatchSeconds: true },
           orderBy: { date: 'desc' },
           take: 30,
         },
@@ -234,7 +234,7 @@ adminRouter.get('/videos', async (_req, res, next) => {
       include: {
         playlist: true,
         summaries: {
-          include: { user: { select: { id: true, name: true, email: true } } },
+          select: { id: true, activeWatchSeconds: true },
           orderBy: { date: 'desc' },
           take: 50,
         },
