@@ -225,7 +225,6 @@ trackingRouter.post('/ingest', async (req, res, next) => {
 
     clearCachePrefix(`overview:${req.user.id}`);
     clearCachePrefix(`time-map:${req.user.id}`);
-    clearCachePrefix(`advanced:${req.user.id}`);
     clearCachePrefix('leaderboard');
 
     res.json(result);

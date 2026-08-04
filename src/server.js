@@ -12,8 +12,9 @@ import { adminRouter } from './routes/admin.js';
 import { playlistsRouter } from './routes/playlists.js';
 import { initRealtime } from './realtime.js';
 import { corsOrigin, getAllowedOrigins } from './cors.js';
-import { ensureUserContactColumns } from './services/databaseEnsure.js';
+import { ensureAdvancedMetricsSnapshotTable, ensureUserContactColumns } from './services/databaseEnsure.js';
 import { ensureAnalyticsIndexes } from './services/databaseIndexes.js';
+import { startAdvancedMetricsCacheJob } from './services/advancedMetricsCache.js';
 
 const PROJECT_NAME = 'HexTorq Learn Backend';
 const app = express();
@@ -117,10 +118,11 @@ app.use((error, _req, res, _next) => {
 const server = createServer(app);
 initRealtime(server);
 
-Promise.all([ensureUserContactColumns(), ensureAnalyticsIndexes()])
+Promise.all([ensureUserContactColumns(), ensureAdvancedMetricsSnapshotTable(), ensureAnalyticsIndexes()])
   .then(() => {
     server.listen(port, () => {
       console.log(`HexTorq Learn backend listening on http://localhost:${port}`);
+      startAdvancedMetricsCacheJob();
     });
   })
   .catch((error) => {

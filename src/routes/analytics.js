@@ -2,7 +2,8 @@ import express from 'express';
 import { prisma } from '../prisma.js';
 import { requireAuth } from '../middleware/auth.js';
 import { getUserOverview, getUserTimeMap } from '../services/analytics.js';
-import { getAdvancedUserMetrics, getLearnerLeaderboard } from '../services/advancedMetrics.js';
+import { getLearnerLeaderboard } from '../services/advancedMetrics.js';
+import { getCachedAdvancedUserMetrics } from '../services/advancedMetricsCache.js';
 import { cachedResponse } from '../services/responseCache.js';
 
 export const analyticsRouter = express.Router();
@@ -29,7 +30,7 @@ analyticsRouter.get('/time-map', async (req, res, next) => {
 
 analyticsRouter.get('/advanced', async (req, res, next) => {
   try {
-    res.json(await cachedResponse(`advanced:${req.user.id}`, 15000, () => getAdvancedUserMetrics(req.user.id)));
+    res.json(await cachedResponse(`advanced:${req.user.id}`, 30000, () => getCachedAdvancedUserMetrics(req.user.id)));
   } catch (error) {
     next(error);
   }
