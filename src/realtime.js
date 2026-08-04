@@ -7,6 +7,7 @@ let io;
 
 export function initRealtime(server) {
   io = new Server(server, {
+    transports: ['websocket'],
     cors: {
       origin: getAllowedOrigins(),
       credentials: true,
