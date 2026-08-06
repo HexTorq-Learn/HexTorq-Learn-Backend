@@ -102,8 +102,8 @@ export async function getUserTimeMap(userId, date = new Date()) {
   const [buckets, recentEvents] = await Promise.all([
     prisma.$queryRaw`
       SELECT
-        EXTRACT(HOUR FROM "serverTs" AT TIME ZONE ${APP_TIME_ZONE})::int AS hour,
-        EXTRACT(MINUTE FROM "serverTs" AT TIME ZONE ${APP_TIME_ZONE})::int AS minute,
+        EXTRACT(HOUR FROM "serverTs" AT TIME ZONE 'UTC' AT TIME ZONE ${APP_TIME_ZONE})::int AS hour,
+        EXTRACT(MINUTE FROM "serverTs" AT TIME ZONE 'UTC' AT TIME ZONE ${APP_TIME_ZONE})::int AS minute,
         COUNT(*)::int AS "activeEvents",
         SUM(CASE WHEN "eventType" = 'PLAY' THEN 1 ELSE 0 END)::int AS "playEvents",
         SUM(CASE WHEN "eventType" = 'PAUSE' THEN 1 ELSE 0 END)::int AS "pauseEvents",

@@ -765,7 +765,7 @@ export async function getAdminComparisonMetrics() {
     prisma.$queryRaw`
       SELECT
         "userId",
-        EXTRACT(HOUR FROM "serverTs" AT TIME ZONE ${APP_TIME_ZONE})::int AS hour,
+        EXTRACT(HOUR FROM "serverTs" AT TIME ZONE 'UTC' AT TIME ZONE ${APP_TIME_ZONE})::int AS hour,
         COUNT(*)::int AS events,
         SUM(CASE WHEN "eventType" IN ('TAB_HIDDEN', 'WINDOW_BLUR') THEN 1 ELSE 0 END)::int AS "distractionCount",
         SUM(CASE WHEN "eventType" = 'IDLE_START' THEN 1 ELSE 0 END)::int AS "idleCount"
