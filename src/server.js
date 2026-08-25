@@ -7,16 +7,20 @@ import { ZodError } from 'zod';
 import { authRouter } from './routes/auth.js';
 import { videosRouter } from './routes/videos.js';
 import { trackingRouter } from './routes/tracking.js';
+import { portalRouter } from './routes/portal.js';
+import { notificationsRouter } from './routes/notifications.js';
 import { analyticsRouter } from './routes/analytics.js';
 import { adminRouter } from './routes/admin.js';
 import { playlistsRouter } from './routes/playlists.js';
 import { initRealtime } from './realtime.js';
 import { corsOrigin, getAllowedOrigins } from './cors.js';
-import { ensureAdvancedMetricsSnapshotTable, ensureUserContactColumns } from './services/databaseEnsure.js';
+import { ensureAdvancedMetricsSnapshotTable, ensureNotificationsTable, ensurePortalActivityTables, ensureUserContactColumns } from './services/databaseEnsure.js';
 import { ensureAnalyticsIndexes } from './services/databaseIndexes.js';
 import { startAdvancedMetricsCacheJob } from './services/advancedMetricsCache.js';
 import { startTrackingQueue, stopTrackingQueue } from './services/trackingQueue.js';
+import { startPortalActivityQueue, stopPortalActivityQueue } from './services/portalActivityQueue.js';
 import { startWatchEventPartitionJob } from './services/databasePartitions.js';
+import { startNotificationScanJob, stopNotificationScanJob } from './services/notifications.js';
 
 const PROJECT_NAME = 'HexTorq Learn Backend';
 const app = express();
@@ -89,6 +93,8 @@ function mountApi(prefix = '') {
   app.use(`${prefix}/api/playlists`, playlistsRouter);
   app.use(`${prefix}/api/videos`, videosRouter);
   app.use(`${prefix}/api/tracking`, trackingRouter);
+  app.use(`${prefix}/api/portal`, portalRouter);
+  app.use(`${prefix}/api/notifications`, notificationsRouter);
   app.use(`${prefix}/api/analytics`, analyticsRouter);
   app.use(`${prefix}/api/admin`, adminRouter);
 }
@@ -120,13 +126,15 @@ app.use((error, _req, res, _next) => {
 const server = createServer(app);
 initRealtime(server);
 
-Promise.all([ensureUserContactColumns(), ensureAdvancedMetricsSnapshotTable(), ensureAnalyticsIndexes()])
+Promise.all([ensureUserContactColumns(), ensureAdvancedMetricsSnapshotTable(), ensurePortalActivityTables(), ensureNotificationsTable(), ensureAnalyticsIndexes()])
   .then(() => {
     server.listen(port, () => {
       console.log(`HexTorq Learn backend listening on http://localhost:${port}`);
       startTrackingQueue();
+      startPortalActivityQueue();
       startWatchEventPartitionJob();
       startAdvancedMetricsCacheJob();
+      startNotificationScanJob();
     });
   })
   .catch((error) => {
@@ -137,7 +145,8 @@ Promise.all([ensureUserContactColumns(), ensureAdvancedMetricsSnapshotTable(), e
 async function shutdown(signal) {
   console.log(`Received ${signal}, flushing tracking queue before shutdown`);
   try {
-    await stopTrackingQueue();
+    stopNotificationScanJob();
+    await Promise.all([stopTrackingQueue(), stopPortalActivityQueue()]);
   } catch (error) {
     console.error('Failed to flush tracking queue during shutdown', error);
   } finally {

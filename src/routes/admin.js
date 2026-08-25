@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../prisma.js';
 import { requireAdmin, requireAuth } from '../middleware/auth.js';
 import { getUserTimeMap } from '../services/analytics.js';
-import { getAdminComparisonMetrics } from '../services/advancedMetrics.js';
+import { getAdminComparisonMetrics, getContentInsights } from '../services/advancedMetrics.js';
 import { getCachedAdvancedUserMetrics } from '../services/advancedMetricsCache.js';
 
 export const adminRouter = express.Router();
@@ -338,6 +338,14 @@ adminRouter.get('/analytics/users/:id/advanced', async (req, res, next) => {
 adminRouter.get('/analytics/comparison', async (_req, res, next) => {
   try {
     res.json(await getAdminComparisonMetrics());
+  } catch (error) {
+    next(error);
+  }
+});
+
+adminRouter.get('/analytics/content-insights', async (_req, res, next) => {
+  try {
+    res.json(await getContentInsights());
   } catch (error) {
     next(error);
   }

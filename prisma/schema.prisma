@@ -28,19 +28,23 @@ enum WatchEventType {
 }
 
 model User {
-  id           String              @id @default(cuid())
-  name         String
-  email        String              @unique
-  username     String?
-  phone        String?
-  passwordHash String
-  role         UserRole            @default(STUDENT)
-  createdAt    DateTime            @default(now())
-  updatedAt    DateTime            @updatedAt
-  sessions     WatchSession[]
-  events       WatchEvent[]
-  heatmap      VideoSecondHeatmap[]
-  summaries    DailyWatchSummary[]
+  id             String                @id @default(cuid())
+  name           String
+  email          String                @unique
+  username       String?
+  phone          String?
+  passwordHash   String
+  role           UserRole              @default(STUDENT)
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  sessions       WatchSession[]
+  events         WatchEvent[]
+  heatmap        VideoSecondHeatmap[]
+  summaries      DailyWatchSummary[]
+  portalSessions PortalSession[]
+  portalEvents   PortalActivityEvent[]
+  portalSummaries DailyPortalSummary[]
+  notifications  Notification[]
 
   @@index([createdAt])
 }
@@ -160,4 +164,72 @@ model AdvancedMetricsSnapshot {
   updatedAt    DateTime @updatedAt
 
   @@index([calculatedAt])
+}
+
+// Portal-wide activity tracking (login/idle/logout), independent of whether a
+// video is open -- distinct from WatchSession/WatchEvent which only exist while
+// a video player is mounted. Provisioned via raw SQL in databaseEnsure.js
+// (see AdvancedMetricsSnapshot above for the same pattern), not a formal migration.
+model PortalSession {
+  id         String                @id @default(cuid())
+  userId     String
+  loginAt    DateTime              @default(now())
+  logoutAt   DateTime?
+  lastSeenAt DateTime              @default(now())
+  userAgent  String?
+  ipAddress  String?
+  user       User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  events     PortalActivityEvent[]
+
+  @@index([userId, loginAt])
+  @@index([lastSeenAt])
+}
+
+model PortalActivityEvent {
+  id        String         @id @default(cuid())
+  userId    String
+  sessionId String?
+  eventType String
+  clientTs  DateTime
+  serverTs  DateTime       @default(now())
+  metadata  Json?
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session   PortalSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([userId, serverTs])
+  @@index([serverTs])
+  @@index([userId, eventType, serverTs])
+}
+
+model Notification {
+  id          String    @id @default(cuid())
+  userId      String
+  type        String
+  severity    String    @default("medium")
+  title       String
+  message     String
+  channel     String    @default("portal")
+  read        Boolean   @default(false)
+  emailSentAt DateTime?
+  emailError  String?
+  createdAt   DateTime  @default(now())
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read, createdAt])
+  @@index([userId, type, createdAt])
+}
+
+model DailyPortalSummary {
+  id            String   @id @default(cuid())
+  userId        String
+  date          DateTime
+  activeSeconds Int      @default(0)
+  idleSeconds   Int      @default(0)
+  loginCount    Int      @default(0)
+  updatedAt     DateTime @updatedAt
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date])
+  @@index([userId, date])
+  @@index([date])
 }

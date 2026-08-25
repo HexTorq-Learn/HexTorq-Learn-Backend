@@ -44,3 +44,8 @@ export function emitUserMetrics(userId, payload) {
   io.to(`user:${userId}`).emit('metrics:update', payload);
   io.to('admins').emit('admin:metrics:update', { userId, ...payload });
 }
+
+export function emitNotification(userId, notification) {
+  if (!io) return;
+  io.to(`user:${userId}`).emit('notification:new', notification);
+}

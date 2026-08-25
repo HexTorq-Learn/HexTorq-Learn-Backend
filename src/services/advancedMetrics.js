@@ -382,6 +382,51 @@ function computeInsightCards(metrics) {
   };
 }
 
+export async function getPortalActivitySummary(userId) {
+  const since = new Date(Date.now() - 60 * DAY_MS);
+  const [summaries, recentEvents, latestSession] = await Promise.all([
+    prisma.dailyPortalSummary.findMany({
+      where: { userId, date: { gte: since } },
+      orderBy: { date: 'asc' },
+    }),
+    prisma.portalActivityEvent.findMany({
+      where: { userId },
+      orderBy: { serverTs: 'desc' },
+      take: 50,
+    }),
+    prisma.portalSession.findFirst({
+      where: { userId },
+      orderBy: { loginAt: 'desc' },
+    }),
+  ]);
+
+  const today = formatDateKey(new Date());
+  const todayRow = summaries.find((row) => formatDateKey(row.date) === today);
+  const last7 = summaries.slice(-7);
+  const lastIdleStart = recentEvents.find((event) => event.eventType === 'IDLE_START');
+  const lastIdleEnd = recentEvents.find((event) => event.eventType === 'IDLE_END');
+  const isIdle = Boolean(lastIdleStart && (!lastIdleEnd || lastIdleStart.serverTs > lastIdleEnd.serverTs));
+  const heartbeatRecent = Boolean(latestSession && !latestSession.logoutAt && secondsBetween(latestSession.lastSeenAt) < 2 * 60);
+  const currentStatus = !heartbeatRecent ? 'offline' : isIdle ? 'idle' : 'online';
+
+  return {
+    todayActiveSeconds: todayRow?.activeSeconds || 0,
+    todayIdleSeconds: todayRow?.idleSeconds || 0,
+    last7DaysActiveSeconds: sum(last7, (row) => row.activeSeconds),
+    totalActiveSeconds: sum(summaries, (row) => row.activeSeconds),
+    loginCount: sum(summaries, (row) => row.loginCount),
+    portalStreakDays: longestStreak(summaries.filter((row) => row.activeSeconds > 0).map((row) => formatDateKey(row.date))),
+    dailySeries: summaries.map((row) => ({ date: formatDateKey(row.date), activeSeconds: row.activeSeconds, idleSeconds: row.idleSeconds })),
+    currentStatus,
+    lastSeenAt: latestSession?.lastSeenAt || null,
+    recentTimeline: recentEvents.slice(0, 30).reverse().map((event) => ({
+      type: event.eventType,
+      clock: formatClockParts(event.serverTs).clock,
+      serverTs: event.serverTs,
+    })),
+  };
+}
+
 function computeResumeVideo(videoMetrics) {
   return [...videoMetrics]
     .filter((video) => video.percentWatched > 0 && video.percentWatched < 90)
@@ -427,6 +472,9 @@ function buildBadges(metrics) {
   const lowIdle = Math.max(0, 100 - Math.floor(metrics.learningTime.idleSeconds / 60));
   const activeSessions = metrics.sessionQuality.sessionCount;
   const momentum = metrics.sessionQuality.studyMomentumScore;
+  const portalStreak = metrics.portalActivity?.portalStreakDays || 0;
+  const portalLogins = metrics.portalActivity?.loginCount || 0;
+  const portalActiveHours = Math.floor((metrics.portalActivity?.totalActiveSeconds || 0) / 3600);
 
   return [
     badgeDefinition('first_minute', 'First Minute', 'Time', activeMinutes >= 1, activeMinutes, 1, 'Study for 1 active minute'),
@@ -491,6 +539,10 @@ function buildBadges(metrics) {
     badgeDefinition('morning_10', 'Morning Learner', 'Time of Day', morningEvents >= 10, morningEvents, 10, 'Study in the morning often'),
     badgeDefinition('evening_10', 'Evening Learner', 'Time of Day', eveningEvents >= 10, eveningEvents, 10, 'Study in the evening often'),
     badgeDefinition('night_10', 'Night Owl Learner', 'Time of Day', lateNight >= 10, lateNight, 10, 'Study late-night often'),
+    badgeDefinition('portal_login_1', 'Welcome Back', 'Portal', portalLogins >= 1, portalLogins, 1, 'Log in to the portal'),
+    badgeDefinition('portal_streak_3', 'Portal Regular', 'Portal', portalStreak >= 3, portalStreak, 3, 'Be active in the portal 3 days in a row'),
+    badgeDefinition('portal_streak_7', 'Portal Habit', 'Portal', portalStreak >= 7, portalStreak, 7, 'Be active in the portal 7 days in a row'),
+    badgeDefinition('portal_hour_5', 'Always Online', 'Portal', portalActiveHours >= 5, portalActiveHours, 5, 'Spend 5 hours active in the portal'),
   ];
 }
 
@@ -608,7 +660,7 @@ function computeAlerts(events, summaries, videoMetrics, playlistMetrics) {
 
 export async function getAdvancedUserMetrics(userId) {
   const eventWindowStart = new Date(Date.now() - 90 * DAY_MS);
-  const [user, videos, sessions, events, heatmap, summaries, playlists] = await Promise.all([
+  const [user, videos, sessions, events, heatmap, summaries, playlists, portalActivity] = await Promise.all([
     prisma.user.findUnique({ where: { id: userId }, select: { id: true, name: true, email: true, role: true, createdAt: true } }),
     prisma.video.findMany({ include: { playlist: true } }),
     prisma.watchSession.findMany({
@@ -648,6 +700,7 @@ export async function getAdvancedUserMetrics(userId) {
       },
     }),
     prisma.playlist.findMany({ orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }] }),
+    getPortalActivitySummary(userId),
   ]);
 
   if (!user) return null;
@@ -725,6 +778,7 @@ export async function getAdvancedUserMetrics(userId) {
     playlistMetrics,
     learningProgress: progress,
     alerts,
+    portalActivity,
     charts: {
       streakCalendar: computeStreakCalendar(summaries),
       completionFunnel: computeCompletionFunnel(videoMetrics),
@@ -752,7 +806,7 @@ export async function getAdvancedUserMetrics(userId) {
 
 export async function getAdminComparisonMetrics() {
   const eventWindowStart = new Date(Date.now() - 30 * DAY_MS);
-  const [users, videos, summaries, eventHourRows, heatmapGroups, stuckGroups, playlistRows] = await Promise.all([
+  const [users, videos, summaries, eventHourRows, heatmapGroups, stuckGroups, playlistRows, portalSummaries, openPortalSessions] = await Promise.all([
     prisma.user.findMany({
       select: { id: true, name: true, email: true, role: true, createdAt: true },
       orderBy: { createdAt: 'desc' },
@@ -785,6 +839,15 @@ export async function getAdminComparisonMetrics() {
       _count: { id: true },
     }),
     prisma.playlist.findMany({ include: { videos: true } }),
+    prisma.dailyPortalSummary.groupBy({
+      by: ['userId'],
+      _sum: { activeSeconds: true, loginCount: true },
+    }),
+    prisma.portalSession.findMany({
+      where: { logoutAt: null },
+      select: { userId: true, lastSeenAt: true },
+      orderBy: { lastSeenAt: 'desc' },
+    }),
   ]);
 
   const videosById = Object.fromEntries(videos.map((video) => [video.id, video]));
@@ -792,6 +855,15 @@ export async function getAdminComparisonMetrics() {
   const eventHoursByUser = groupBy(eventHourRows, (row) => row.userId);
   const heatmapByUser = groupBy(heatmapGroups, (row) => row.userId);
   const stuckByUser = Object.fromEntries(stuckGroups.map((row) => [row.userId, row._count.id]));
+  const portalByUser = Object.fromEntries(portalSummaries.map((row) => [
+    row.userId,
+    { activeSeconds: row._sum.activeSeconds || 0, loginCount: row._sum.loginCount || 0 },
+  ]));
+  const lastSeenByUser = {};
+  for (const session of openPortalSessions) {
+    if (!lastSeenByUser[session.userId]) lastSeenByUser[session.userId] = session.lastSeenAt;
+  }
+  const onlineCutoff = Date.now() - 2 * 60 * 1000;
 
   const rows = users.map((user) => {
     const userSummaries = summariesByUser[user.id] || [];
@@ -839,6 +911,8 @@ export async function getAdminComparisonMetrics() {
     const idleEvents = sum(userEventHours, (row) => Number(row.idleCount || 0));
     const rewatchedSeconds = sum(progressRows, (row) => row.rewatchedSeconds);
     const focusScore = Math.max(0, Math.min(100, activeStudySeconds ? 100 - distractionRate * 2 - idleEvents * 5 : 0));
+    const lastSeenAt = lastSeenByUser[user.id] || null;
+    const onlineStatus = lastSeenAt && lastSeenAt.getTime() >= onlineCutoff ? 'online' : 'offline';
 
     return {
       user,
@@ -851,6 +925,10 @@ export async function getAdminComparisonMetrics() {
       lowCompletion: completionRatePercent < 50,
       highDistraction: distractionRate >= 5,
       stuckSegments: stuckByUser[user.id] || 0,
+      portalActiveSeconds: portalByUser[user.id]?.activeSeconds || 0,
+      portalLoginCount: portalByUser[user.id]?.loginCount || 0,
+      onlineStatus,
+      lastSeenAt,
       dailySeries,
       hourlyDistribution,
       radar: {
@@ -895,7 +973,9 @@ export async function getAdminComparisonMetrics() {
       byActiveStudy: [...rows].sort((a, b) => b.activeStudySeconds - a.activeStudySeconds),
       byConsistency: [...rows].sort((a, b) => b.consistencyScore - a.consistencyScore),
       byPlaylistProgress: [...rows].sort((a, b) => b.playlistProgressPercent - a.playlistProgressPercent),
+      byPortalActivity: [...rows].sort((a, b) => b.portalActiveSeconds - a.portalActiveSeconds),
     },
+    onlineUserCount: rows.filter((row) => row.onlineStatus === 'online').length,
     inactiveUsers: rows.filter((row) => row.activeStudySeconds === 0),
     highDistractionUsers: rows.filter((row) => row.highDistraction),
     lowCompletionUsers: rows.filter((row) => row.lowCompletion),
@@ -932,7 +1012,124 @@ export async function getLearnerLeaderboard() {
       badgeCount: row.game?.badgeCount || row.game?.badges?.length || 0,
       totalBadgeCount: row.game?.totalBadgeCount || row.game?.allBadges?.length || row.game?.badges?.length || 0,
       badges: row.game?.badges || [],
+      portalActiveSeconds: row.portalActiveSeconds,
+      portalLoginCount: row.portalLoginCount,
+      onlineStatus: row.onlineStatus,
       rankScore: row.activeStudySeconds + row.consistencyScore * 60 + row.completionRatePercent * 30,
     })).sort((a, b) => b.rankScore - a.rankScore),
   };
+}
+
+function mergeHotMoments(rows) {
+  const sorted = [...rows].sort((a, b) => a.second - b.second);
+  const ranges = [];
+
+  for (const row of sorted) {
+    const previous = ranges[ranges.length - 1];
+    if (previous && row.second <= previous.endSec + 1) {
+      previous.endSec = row.second;
+      previous.peakRatio = Math.max(previous.peakRatio, row.ratio);
+      previous.peakViewerCount = Math.max(previous.peakViewerCount, row.viewerCount);
+    } else {
+      ranges.push({
+        startSec: row.second,
+        endSec: row.second,
+        peakRatio: row.ratio,
+        peakViewerCount: row.viewerCount,
+      });
+    }
+  }
+
+  return ranges;
+}
+
+// Aggregates difficulty/rewatch signals across ALL learners per video, so admins
+// can see "this video is confusing for everyone around 4:32" instead of only
+// per-learner (which getAdvancedUserMetrics already provides for one user at a time).
+export async function getContentInsights() {
+  const [videos, secondRows, viewerRows, seekAgg, pauseAgg] = await Promise.all([
+    prisma.video.findMany({ include: { playlist: true } }),
+    prisma.videoSecondHeatmap.groupBy({
+      by: ['videoId', 'second'],
+      _sum: { watchCount: true },
+      _count: { userId: true },
+    }),
+    prisma.videoSecondHeatmap.groupBy({ by: ['videoId', 'userId'] }),
+    prisma.$queryRaw`
+      SELECT
+        "videoId",
+        COUNT(*) FILTER (WHERE "toTimeSec" < "fromTimeSec")::int AS "rewindCount",
+        COUNT(*) FILTER (WHERE "toTimeSec" > "fromTimeSec")::int AS "forwardSkipCount"
+      FROM "WatchEvent"
+      WHERE "eventType" = 'SEEK'
+      GROUP BY "videoId"
+    `,
+    prisma.watchEvent.groupBy({
+      by: ['videoId'],
+      where: { eventType: 'PAUSE' },
+      _count: { id: true },
+    }),
+  ]);
+
+  const viewerCountByVideo = {};
+  for (const row of viewerRows) {
+    viewerCountByVideo[row.videoId] = (viewerCountByVideo[row.videoId] || 0) + 1;
+  }
+  const secondsByVideo = groupBy(secondRows, (row) => row.videoId);
+  const seekByVideo = Object.fromEntries(seekAgg.map((row) => [row.videoId, row]));
+  const pauseByVideo = Object.fromEntries(pauseAgg.map((row) => [row.videoId, row._count.id]));
+
+  const results = videos
+    .map((video) => {
+      const viewerCount = viewerCountByVideo[video.id] || 0;
+      const rows = secondsByVideo[video.id] || [];
+      const pauseCount = pauseByVideo[video.id] || 0;
+      const rewindCount = Number(seekByVideo[video.id]?.rewindCount || 0);
+      const forwardSkipCount = Number(seekByVideo[video.id]?.forwardSkipCount || 0);
+
+      const totalWatch = sum(rows, (row) => row._sum.watchCount || 0);
+      const totalViewerSeconds = sum(rows, (row) => row._count.userId || 0);
+      const baselineRatio = totalViewerSeconds ? totalWatch / totalViewerSeconds : 0;
+      const minViewersForHotspot = Math.max(2, Math.ceil(viewerCount * 0.2));
+
+      const hotRows = rows
+        .map((row) => ({
+          second: row.second,
+          viewerCount: row._count.userId || 0,
+          ratio: row._count.userId ? (row._sum.watchCount || 0) / row._count.userId : 0,
+        }))
+        .filter((row) => row.viewerCount >= minViewersForHotspot && row.ratio >= baselineRatio * 1.5 && baselineRatio > 0);
+
+      const hotMoments = mergeHotMoments(hotRows)
+        .sort((a, b) => b.peakRatio - a.peakRatio)
+        .slice(0, 5)
+        .map((range) => ({
+          ...range,
+          peakRatio: Math.round(range.peakRatio * 10) / 10,
+        }));
+
+      const avgPauseRate = viewerCount ? Math.round((pauseCount / viewerCount) * 10) / 10 : 0;
+      const avgRewindRate = viewerCount ? Math.round((rewindCount / viewerCount) * 10) / 10 : 0;
+      const crossUserDifficultyScore = Math.round((avgPauseRate * 2 + avgRewindRate * 3 + hotMoments.length * 5) * 10) / 10;
+
+      return {
+        videoId: video.id,
+        title: video.title,
+        youtubeId: video.youtubeId,
+        playlistName: video.playlist?.name || 'No playlist',
+        durationSec: video.durationSec || 0,
+        viewerCount,
+        pauseCount,
+        rewindCount,
+        forwardSkipCount,
+        avgPauseRate,
+        avgRewindRate,
+        crossUserDifficultyScore,
+        hotMoments,
+      };
+    })
+    .filter((video) => video.viewerCount > 0)
+    .sort((a, b) => b.crossUserDifficultyScore - a.crossUserDifficultyScore);
+
+  return { videos: results };
 }
