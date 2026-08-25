@@ -5,6 +5,7 @@ import { prisma } from '../prisma.js';
 import { requireAdmin, requireAuth } from '../middleware/auth.js';
 import { getUserTimeMap } from '../services/analytics.js';
 import { getAdminComparisonMetrics, getContentInsights } from '../services/advancedMetrics.js';
+import { runWeeklyDigestForAllUsers } from '../services/weeklyDigest.js';
 import { getCachedAdvancedUserMetrics } from '../services/advancedMetricsCache.js';
 
 export const adminRouter = express.Router();
@@ -346,6 +347,17 @@ adminRouter.get('/analytics/comparison', async (_req, res, next) => {
 adminRouter.get('/analytics/content-insights', async (_req, res, next) => {
   try {
     res.json(await getContentInsights());
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Manual trigger for testing/ad-hoc sends -- the real schedule is the weekly
+// Sunday-evening job started in server.js (see services/weeklyDigest.js).
+adminRouter.post('/weekly-digest/run', async (_req, res, next) => {
+  try {
+    await runWeeklyDigestForAllUsers();
+    res.json({ triggered: true });
   } catch (error) {
     next(error);
   }

@@ -21,6 +21,7 @@ import { startTrackingQueue, stopTrackingQueue } from './services/trackingQueue.
 import { startPortalActivityQueue, stopPortalActivityQueue } from './services/portalActivityQueue.js';
 import { startWatchEventPartitionJob } from './services/databasePartitions.js';
 import { startNotificationScanJob, stopNotificationScanJob } from './services/notifications.js';
+import { startWeeklyDigestJob, stopWeeklyDigestJob } from './services/weeklyDigest.js';
 
 const PROJECT_NAME = 'HexTorq Learn Backend';
 const app = express();
@@ -135,6 +136,7 @@ Promise.all([ensureUserContactColumns(), ensureAdvancedMetricsSnapshotTable(), e
       startWatchEventPartitionJob();
       startAdvancedMetricsCacheJob();
       startNotificationScanJob();
+      startWeeklyDigestJob();
     });
   })
   .catch((error) => {
@@ -146,6 +148,7 @@ async function shutdown(signal) {
   console.log(`Received ${signal}, flushing tracking queue before shutdown`);
   try {
     stopNotificationScanJob();
+    stopWeeklyDigestJob();
     await Promise.all([stopTrackingQueue(), stopPortalActivityQueue()]);
   } catch (error) {
     console.error('Failed to flush tracking queue during shutdown', error);
