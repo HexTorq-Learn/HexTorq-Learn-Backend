@@ -7,7 +7,9 @@ let io;
 
 export function initRealtime(server) {
   io = new Server(server, {
-    transports: ['websocket'],
+    // The production pipeline currently does not reliably proxy WebSocket
+    // upgrades. Socket.IO polling keeps realtime events working over HTTPS.
+    transports: ['polling'],
     cors: {
       origin: getAllowedOrigins(),
       credentials: true,
